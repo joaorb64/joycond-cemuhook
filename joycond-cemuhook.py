@@ -1,3 +1,4 @@
+import sys
 import evdev
 from threading import Thread
 import socket
@@ -33,11 +34,13 @@ class Message(list):
 
 
 class UDPServer:
-    def __init__(self, host='', port=26760):
+    def __init__(self, host='', port=26760, device=None, wine_mode=False):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((host, port))
         self.counter = 0
         self.client = None
+        self.device = device
+        self.wine_mode = wine_mode
 
         self.motion_x = 0
         self.motion_y = 0
@@ -149,14 +152,29 @@ class UDPServer:
 
         data.extend(struct.pack('<d', time() * 10**6))
 
-        sensors = [
-            - self.accel_y / 4000,
-            self.accel_z / 4000,
-            self.accel_x / 4000,
-            self.motion_y / (10),
-            self.motion_z / (10),
-            self.motion_x / (10),
-        ]
+        if self.wine_mode == True:
+            self.motion_x = self.motion_x/4
+            self.motion_y = self.motion_y/4
+            self.motion_z = self.motion_z/4
+
+        if self.device and self.device.name == "Nintendo Switch Pro Controller IMU":
+            sensors = [
+                self.accel_y / 4000,
+                - self.accel_z / 4000,
+                self.accel_x / 4000,
+                - self.motion_y / (10),
+                - self.motion_z / (10),
+                self.motion_x / (10),
+            ]
+        else:
+            sensors = [
+                - self.accel_y / 4000,
+                self.accel_z / 4000,
+                self.accel_x / 4000,
+                self.motion_y / (10),
+                self.motion_z / (10),
+                self.motion_x / (10),
+            ]
 
         self.motion_x = 0
         self.motion_y = 0
@@ -186,15 +204,22 @@ for d in devices:
     if d.name == "Nintendo Switch Right Joy-Con IMU":
         device = d
         break
+    if d.name == "Nintendo Switch Pro Controller IMU":
+        device = d
+        break
 
 if device == None:
-    print("No \"Nintendo Switch Right Joy-Con IMU\" detected")
+    print("No \"Nintendo Switch Right Joy-Con IMU\" or \"Nintendo Switch Pro Controller IMU\" detected")
     quit()
 
-print(device)
-print(device.capabilities(verbose=True, absinfo=True))
+print("Controller detected: " + device.name)
 
-server = UDPServer('127.0.0.1', 26760)
+wine_mode = False
+if len(sys.argv) > 1 and sys.argv[1] == "wine":
+    wine_mode = True
+    print("Starting in Wine mode")
+
+server = UDPServer('127.0.0.1', 26760, device, wine_mode)
 server.start()
 
 for event in device.read_loop():
