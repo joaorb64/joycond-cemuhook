@@ -7,6 +7,7 @@ Support for cemuhook's UDP protocol for joycond devices for use with emulators l
 Server code heavly based on `ds4drv-cemuhook <https://github.com/TheDrHax/ds4drv-cemuhook>`_'s implementation.
 
 Currently supports one connected controller from the following:
+
 - Joycon L+R combination. It detects and uses only the Right joycon's motion as to simulate a Wii Remote
 - Switch Pro controller
 
