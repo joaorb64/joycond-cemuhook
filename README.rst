@@ -19,10 +19,14 @@ How to use
 - Run joycond-cemuhook: ``python3 joycond-cemuhook`` (use ``python3 joycond-cemuhook wine`` for correct gyro on wine applications such as Cemu)
 - Open a compatible emulator and enable cemuhook UDP motion input
 
-Mario Kart 8 on Cemu (Wine)
-
-.. image:: media/mk8-cemu.gif
+Media
+--------
 
 The Legend of Zelda: Swkyward Sword on Dolphin
 
 .. image:: media/zeldass-dolphin.gif
+
+
+Mario Kart 8 on Cemu (Wine)
+
+.. image:: media/mk8-cemu.gif
