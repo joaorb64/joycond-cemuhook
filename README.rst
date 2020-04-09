@@ -24,9 +24,9 @@ Media
 
 The Legend of Zelda: Swkyward Sword on Dolphin
 
-.. image:: media/zeldass-dolphin.gif
+.. image:: ../media/zeldass-dolphin.gif
 
 
 Mario Kart 8 on Cemu (Wine)
 
-.. image:: media/mk8-cemu.gif
+.. image:: ../media/mk8-cemu.gif
