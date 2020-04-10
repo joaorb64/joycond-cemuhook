@@ -18,7 +18,7 @@ class Message(list):
         ])
 
         # data length
-        self.extend((len(data) + 4).to_bytes(2, byteorder='little'))
+        self.extend(bytes(struct.pack('<H', len(data) + 4)))
 
         self.extend([
             0x00, 0x00, 0x00, 0x00,  # place for CRC32
@@ -30,7 +30,8 @@ class Message(list):
         self.extend(data)
 
         # CRC32
-        self[8:12] = crc32(bytes(self)).to_bytes(4, byteorder='little')
+        crc = crc32(bytes(self)) & 0xffffffff
+        self[8:12] = bytes(struct.pack('<I', crc))
 
 
 class UDPServer:
@@ -38,7 +39,7 @@ class UDPServer:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((host, port))
         self.counter = 0
-        self.client = None
+        self.clients = dict()
         self.device = device
         self.wine_mode = wine_mode
 
@@ -60,23 +61,31 @@ class UDPServer:
             0xef,  # battery (charged)
             0x00,  # ?
         ])
+    
+    @staticmethod
+    def _compat_ord(value):
+        return ord(value) if sys.version_info < (3, 0) else value
 
     def _req_ports(self, message, address):
-        requests_count = int.from_bytes(message[20:24], byteorder='little')
+        requests_count = struct.unpack("<i", message[20:24])[0]
         for i in range(requests_count):
-            index = message[24 + i]
+            index = self._compat_ord(message[24 + i])
+
             if (index != 0):  # we have only one controller
                 continue
+
             self.sock.sendto(bytes(self._res_ports(index)), address)
 
     def _req_data(self, message, address):
-        flags = message[24]
-        reg_id = message[25]
+        flags = self._compat_ord(message[24])
+        reg_id = self._compat_ord(message[25])
         # reg_mac = message[26:32]
 
         if flags == 0 and reg_id == 0:  # TODO: Check MAC
-            self.client = address
-            self.last_request = time()
+            if address not in self.clients:
+                print('[udp] Client connected: {0[0]}:{0[1]}'.format(address))
+
+            self.clients[address] = time()
 
     def _handle_request(self, request):
         message, address = request
@@ -92,9 +101,33 @@ class UDPServer:
             self._req_data(message, address)
         else:
             print('Unknown message type: ' + str(msg_type))
+    
+    def _res_data(self, message):
+        now = time()
+        for address, timestamp in self.clients.copy().items():
+            if now - timestamp < 2:
+                self.sock.sendto(message, address)
+            else:
+                print('[udp] Client disconnected: {0[0]}:{0[1]}'.format(address))
+                del self.clients[address]
+    
+    def _handle_request(self, request):
+        message, address = request
 
-    def send(self):
-        if not self.client:
+        # client_id = message[12:16]
+        msg_type = message[16:20]
+
+        if msg_type == Message.Types['version']:
+            return
+        elif msg_type == Message.Types['ports']:
+            self._req_ports(message, address)
+        elif msg_type == Message.Types['data']:
+            self._req_data(message, address)
+        else:
+            print('[udp] Unknown message type: ' + str(msg_type))
+
+    def report(self):
+        if len(self.clients) == 0:
             return None
 
         data = [
@@ -162,18 +195,18 @@ class UDPServer:
                 self.accel_y / 4000,
                 - self.accel_z / 4000,
                 self.accel_x / 4000,
-                - self.motion_y / (10),
-                - self.motion_z / (10),
-                self.motion_x / (10),
+                - self.motion_y / (12),
+                - self.motion_z / (12),
+                self.motion_x / (12),
             ]
         else:
             sensors = [
                 - self.accel_y / 4000,
                 self.accel_z / 4000,
                 self.accel_x / 4000,
-                self.motion_y / (10),
-                self.motion_z / (10),
-                self.motion_x / (10),
+                self.motion_y / (12),
+                self.motion_z / (12),
+                self.motion_x / (12),
             ]
 
         self.motion_x = 0
@@ -182,11 +215,8 @@ class UDPServer:
 
         for sensor in sensors:
             data.extend(struct.pack('<f', float(sensor)))
-
-        self.sock.sendto(bytes(Message('data', data)), self.client)
-
-    def report(self, device):
-        self.send()
+        
+        self._res_data(bytes(Message('data', data)))
 
     def _worker(self):
         while True:
@@ -224,7 +254,7 @@ server.start()
 
 for event in device.read_loop():
     if event.type == evdev.ecodes.EV_MSC:
-        server.report(device)
+        server.report()
     if event.type == evdev.ecodes.EV_ABS:
         if event.code == evdev.ecodes.ABS_RX:
             if abs(event.value) > 100:
