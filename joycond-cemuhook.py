@@ -487,7 +487,7 @@ class UDPServer:
                             if motion_d == None:
                                 print("Select motion provider for "+d.name+": ")
                                 for i, dd in enumerate(evdev_devices):
-                                    print(str(i) + " " + dd.name)
+                                    print(str(i) + " " + dd.name + " " + dd.uniq)
                                 motion_d = evdev_devices[int(input(""))]
 
                             for i in range(4):
