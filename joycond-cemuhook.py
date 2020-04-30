@@ -53,6 +53,8 @@ class SwitchDevice:
         self.device = device
         self.motion_device = motion_device
 
+        self.disconnected = False
+
         self.name = device.name
         self.serial = motion_device.uniq if motion_device.uniq != "" else "00:00:00:00:00:00"
         self.mac = [int("0x"+part, 16) for part in self.serial.split(":")]
@@ -115,6 +117,7 @@ class SwitchDevice:
     def handle_motion_events(self):
         if self.motion_device:
             try:
+                asyncio.set_event_loop(asyncio.new_event_loop())
                 for event in self.motion_device.read_loop():
                     if event.type == evdev.ecodes.SYN_REPORT:
                         self.server.report(self)
@@ -147,13 +150,14 @@ class SwitchDevice:
                             self.accel_y = event.value
                         if event.code == evdev.ecodes.ABS_Z:
                             self.accel_z = event.value
-            except e:
+            except(OSError, RuntimeError) as e:
                 print("Device motion disconnected: " + self.name)
-                self.device = None
-                self.server.report(self)
+                asyncio.get_event_loop().close()
     
     def handle_events(self):
         try:
+            asyncio.set_event_loop(asyncio.new_event_loop())
+
             for event in self.device.read_loop():
                 if event.type == evdev.ecodes.SYN_REPORT:
                     self.server.report(self)
@@ -176,10 +180,11 @@ class SwitchDevice:
                         if event.code == evdev.ecodes.ecodes.get(self.keymap.get(ps_key, None), None):
                             self.state[ps_key] = 0xFF if event.value == 1 else 0x00
 
-        except e:
+        except(OSError, RuntimeError) as e:
             print("Device disconnected: " + self.name)
-            self.device = None
-            self.server.report(self)
+            self.server.report_clean(self)
+            self.disconnected = True
+            asyncio.get_event_loop().close()
     
     def get_battery_level(self):
         bus = dbus.SystemBus()
@@ -229,11 +234,13 @@ class UDPServer:
         self.counter = 0
         self.clients = dict()
         self.slots = [None, None, None, None]
+        self.locks = [asyncio.Lock(), asyncio.Lock(), asyncio.Lock(), asyncio.Lock()]
+        self.lock = asyncio.Lock()
 
     def _res_ports(self, index):
         data = [
             index,  # pad id
-            0x00,  # state (connected)
+            0x00,  # state (disconnected)
             0x03,  # model (generic)
             0x01,  # connection type (usb)
             0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # Mac
@@ -438,42 +445,87 @@ class UDPServer:
         
         self._res_data(bytes(Message('data', data)))
     
+    def report_clean(self, device):
+        i = self.slots.index(device) if device in self.slots else -1
+
+        data = [
+            i & 0xff,  # pad id
+            0x00,  # state (disconnected)
+            0x03,  # model (generic)
+            0x01,  # connection type (usb)
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # Mac
+            0x00,  # battery (charged)
+            0x00,  # ?
+        ]
+
+        self._res_data(bytes(Message('data', data)))
+    
     def handle_devices(self):
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
         print("Looking for Nintendo Switch controllers...")
         
         while True:
-            evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+            try:
+                evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
 
-            for d in evdev_devices:
-                if d.name == "Nintendo Switch Left Joy-Con" or \
-                d.name == "Nintendo Switch Right Joy-Con" or \
-                d.name == "Nintendo Switch Pro Controller" or \
-                d.name == "Nintendo Switch Combined Joy-Cons":
-                    found = True if any(my_device.device == d for my_device in self.slots if my_device != None) else False
+                for d in evdev_devices:
+                    if d.name == "Nintendo Switch Left Joy-Con" or \
+                    d.name == "Nintendo Switch Right Joy-Con" or \
+                    d.name == "Nintendo Switch Pro Controller" or \
+                    d.name == "Nintendo Switch Combined Joy-Cons":
+                        found = True if any(my_device.device == d for my_device in self.slots if my_device != None) else False
 
-                    if not found:
-                        motion_d = None
+                        if not found:
+                            motion_d = None
 
-                        for dd in evdev_devices:
-                            if dd.uniq == d.uniq and dd != d:
-                                motion_d = dd
-                                break
-                        
-                        if motion_d == None:
-                            print("Select motion provider: ")
-                            for i, dd in enumerate(evdev_devices):
-                                print(str(i) + " " + dd.name)
-                            motion_d = evdev_devices[int(input(""))]
+                            for dd in evdev_devices:
+                                if dd.uniq == d.uniq and dd != d:
+                                    motion_d = dd
+                                    break
+                            
+                            if motion_d == None:
+                                print("Select motion provider for "+d.name+": ")
+                                for i, dd in enumerate(evdev_devices):
+                                    print(str(i) + " " + dd.name)
+                                motion_d = evdev_devices[int(input(""))]
 
-                        for i in range(4):
-                            if self.slots[i] == None:
-                                self.slots[i] = SwitchDevice(self, d, motion_d)
-                                print("Found "+d.name+" - "+d.uniq)
-                                break
-            
-            #self.slots = [d for d in self.slots if d != None and d.device != None]
+                            for i in range(4):
+                                if self.slots[i] == None:
+                                    self.slots[i] = SwitchDevice(self, d, motion_d)
+                                    print("Found "+d.name+" - "+d.uniq)
+                                    break
+                            
+                            self.print_slots()
+                
+                for i in range(4):
+                    if self.slots[i] != None and self.slots[i].disconnected == True:
+                        self.slots[i] = None
+                        self.print_slots()
+            except:
+                pass
+                    
+    
+    def print_slots(self):
+        slots_print = []
+
+        for i in range(4):
+            if self.slots[i] == None:
+                slots_print.append("0")
+            else:
+                if "Left" in self.slots[i].name:
+                    slots_print.append("L")
+                elif "Right" in self.slots[i].name:
+                    slots_print.append("R")
+                elif "Combined" in self.slots[i].name:
+                    slots_print.append("L+R")
+                else:
+                    slots_print.append("Pro")
+
+        print("Slots: "+str(slots_print))
 
     def _worker(self):
+        asyncio.set_event_loop(asyncio.new_event_loop())
         while True:
             self._handle_request(self.sock.recvfrom(1024))
 
