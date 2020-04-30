@@ -6,16 +6,18 @@ Support for cemuhook's UDP protocol for joycond devices for use with emulators l
 
 Server code heavly based on `ds4drv-cemuhook <https://github.com/TheDrHax/ds4drv-cemuhook>`_'s implementation.
 
-Currently supports one connected controller from the following:
+Supports up to 4 controllers from the following:
 
-- Joycon L+R combination. It detects and uses only the Right joycon's motion as to simulate a Wii Remote
+- Joycon L+R combination (Select if motion comes from L or R Joycon)
 - Switch Pro controller
+- Left Joycon
+- Right Joycon
 
 How to use
 --------
 - Install `dkms-hid-nintendo <https://github.com/nicman23/dkms-hid-nintendo>`_ (if your kernel doesn't include the hid_nintendo driver)
 - Install the `joycond <https://github.com/DanielOgorchock/joycond>`_ userspace driver
-- Connect your Nintendo Switch controllers and assign them as intended (using L+R)
+- Connect your Nintendo Switch controllers and assign them as intended (using the respective L+R)
 - Run joycond-cemuhook: ``python3 joycond-cemuhook``
 - Open a compatible emulator and enable cemuhook UDP motion input
 
