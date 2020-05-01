@@ -302,7 +302,7 @@ class UDPServer:
     def _res_data(self, message):
         now = time()
         for address, timestamp in self.clients.copy().items():
-            if now - timestamp < 2:
+            if now - timestamp < 5:
                 self.sock.sendto(message, address)
             else:
                 print('[udp] Client disconnected: {0[0]}:{0[1]}'.format(address))
