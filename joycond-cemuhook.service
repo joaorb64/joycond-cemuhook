@@ -1,0 +1,10 @@
+[Unit]
+Description=Cemuhook's UDP protocol for joycond devices
+After=joycond.service
+
+[Service]
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/usr/local/bin/joycond-cemuhook.py
+
+[Install]
+WantedBy=multi-user.target
