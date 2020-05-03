@@ -4,7 +4,7 @@ from threading import Thread
 import socket
 import struct
 from binascii import crc32
-from time import time
+import time
 import asyncio
 import dbus
 import json
@@ -282,7 +282,7 @@ class UDPServer:
             if address not in self.clients:
                 print('[udp] Client connected: {0[0]}:{0[1]}'.format(address))
 
-            self.clients[address] = time()
+            self.clients[address] = time.time()
 
     def _handle_request(self, request):
         message, address = request
@@ -300,7 +300,7 @@ class UDPServer:
             print('Unknown message type: ' + str(msg_type))
     
     def _res_data(self, message):
-        now = time()
+        now = time.time()
         for address, timestamp in self.clients.copy().items():
             if now - timestamp < 5:
                 self.sock.sendto(message, address)
@@ -407,7 +407,7 @@ class UDPServer:
             0x00, 0x00,  # trackpad second y
         ])
 
-        data.extend(bytes(struct.pack('<Q', int(time() * 10**6))))
+        data.extend(bytes(struct.pack('<Q', int(time.time() * 10**6))))
 
         if device.motion_device != None:
             if device.motion_device.name == "Nintendo Switch Pro Controller IMU":
@@ -502,6 +502,8 @@ class UDPServer:
                     if self.slots[i] != None and self.slots[i].disconnected == True:
                         self.slots[i] = None
                         self.print_slots()
+                
+                time.sleep(0.2) # sleep for 0.2 seconds
             except:
                 pass
                     
@@ -538,7 +540,7 @@ class UDPServer:
         self.device_thread.daemon = True
         self.device_thread.start()
 
-        self.thread.join()
+        self.device_thread.join()
 
 
 server = UDPServer('127.0.0.1', 26760)
