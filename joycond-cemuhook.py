@@ -1,5 +1,6 @@
 #! /usr/bin/env python3
 
+import signal
 import sys
 import evdev
 from threading import Thread
@@ -457,7 +458,8 @@ class UDPServer:
 
         print("Looking for Nintendo Switch controllers...")
 
-        while True:
+        error = False
+        while not error:
             try:
                 evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
 
@@ -484,8 +486,11 @@ class UDPServer:
 
                             for i in range(4):
                                 if self.slots[i] is None:
-                                    self.slots[i] = SwitchDevice(self, d, motion_d)
-                                    print("Found "+d.name+" - "+d.uniq)
+                                    try:
+                                        self.slots[i] = SwitchDevice(self, d, motion_d)
+                                        print("Found "+d.name+" - "+d.uniq)
+                                    except Exception as e:
+                                        error = True
                                     break
 
                             self.print_slots()
@@ -496,6 +501,7 @@ class UDPServer:
                         self.print_slots()
 
                 time.sleep(0.2)  # sleep for 0.2 seconds
+
             except:
                 pass
 
@@ -533,6 +539,27 @@ class UDPServer:
 
         self.device_thread.join()
 
+    def stop(self, sig=None, frame=None, err=None):
+        if sig is not None:
+            print("Stopping server")
+        self.report_clean(self)
+        self.disconnected = True
+        asyncio.get_event_loop().close()
+        print(err)
+        if err:
+            raise Exception(err)
+
+
+
 
 server = UDPServer('127.0.0.1', 26760)
-server.start()
+
+# Handle CTRL+C and systemctl stop default signal
+signal.signal(signal.SIGINT, server.stop)
+signal.signal(signal.SIGTERM, server.stop)
+
+try:
+    server.start()
+except Exception as e:
+    print("hey")
+    sys.exit(e)
