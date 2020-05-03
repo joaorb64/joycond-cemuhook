@@ -18,7 +18,7 @@ How to use
 1. Install `dkms-hid-nintendo <https://github.com/nicman23/dkms-hid-nintendo>`_ (if your kernel doesn't include the hid_nintendo driver)
 2. Install the `joycond <https://github.com/DanielOgorchock/joycond>`_ userspace driver
 3. Connect your Nintendo Switch controllers and assign them as intended (using the respective L+R)
-4. Run joycond-cemuhook: ``python3 joycond-cemuhook.py``
+4. Run joycond-cemuhook: ``./joycond-cemuhook.py`` or ``python3 joycond-cemuhook.py``
 5. Open a compatible emulator and enable cemuhook UDP motion input
 
 Systemd unit

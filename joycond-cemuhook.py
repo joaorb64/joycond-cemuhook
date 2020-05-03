@@ -1,3 +1,5 @@
+#! /usr/bin/env python3
+
 import sys
 import evdev
 from threading import Thread
@@ -9,8 +11,10 @@ import asyncio
 import dbus
 import json
 
+
 def clamp(my_value, min_value, max_value):
     return max(min(my_value, max_value), min_value)
+
 
 def abs_to_button(value):
     if value > 0.75*255:
@@ -18,6 +22,7 @@ def abs_to_button(value):
     else:
         value = 0
     return value
+
 
 class Message(list):
     Types = dict(version=bytes([0x00, 0x00, 0x10, 0x00]),
@@ -45,6 +50,7 @@ class Message(list):
         # CRC32
         crc = crc32(bytes(self)) & 0xffffffff
         self[8:12] = bytes(struct.pack('<I', crc))
+
 
 class SwitchDevice:
     def __init__(self, server, device, motion_device):
@@ -101,7 +107,7 @@ class SwitchDevice:
         self.motion_x = 0
         self.motion_y = 0
         self.motion_z = 0
-        
+
         self.accel_x = 0
         self.accel_y = 0
         self.accel_z = 0
@@ -113,7 +119,7 @@ class SwitchDevice:
         self.motion_event_thread = Thread(target=self.handle_motion_events)
         self.motion_event_thread.daemon = True
         self.motion_event_thread.start()
-    
+
     def handle_motion_events(self):
         if self.motion_device:
             try:
@@ -153,7 +159,7 @@ class SwitchDevice:
             except(OSError, RuntimeError) as e:
                 print("Device motion disconnected: " + self.name)
                 asyncio.get_event_loop().close()
-    
+
     def handle_events(self):
         try:
             asyncio.set_event_loop(asyncio.new_event_loop())
@@ -164,7 +170,7 @@ class SwitchDevice:
                 if event.type == evdev.ecodes.EV_ABS:
                     for ps_key in self.keymap:
                         key_mine = self.keymap.get(ps_key, None)
-                        if key_mine == None:
+                        if key_mine is None:
                             continue
 
                         if event.code == evdev.ecodes.ecodes.get(key_mine.replace("-", ""), None):
@@ -185,7 +191,7 @@ class SwitchDevice:
             self.server.report_clean(self)
             self.disconnected = True
             asyncio.get_event_loop().close()
-    
+
     def get_battery_level(self):
         bus = dbus.SystemBus()
         upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
@@ -199,15 +205,15 @@ class SwitchDevice:
 
             if properties["Serial"] == self.serial:
                 return properties["Percentage"]
-        
+
         return None
-    
+
     def get_report(self):
         report = self.state
 
         battery = self.get_battery_level()
 
-        if battery == None:
+        if battery is None:
             report["battery"] = 0x00
         elif battery < 10:
             report["battery"] = 0x01
@@ -219,13 +225,14 @@ class SwitchDevice:
             report["battery"] = 0x04
         else:
             report["battery"] = 0x05
-        
+
         self.state["battery"] = report["battery"]
 
-        if self.device == None:
+        if self.device is None:
             return report
-        
+
         return report
+
 
 class UDPServer:
     def __init__(self, host='', port=26760):
@@ -243,7 +250,7 @@ class UDPServer:
             0x00,  # state (disconnected)
             0x03,  # model (generic)
             0x01,  # connection type (usb)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # Mac
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  # Mac
             0x00,  # battery (charged)
             0x00,  # ?
         ]
@@ -262,7 +269,7 @@ class UDPServer:
             ]
 
         return Message('ports', data)
-    
+
     @staticmethod
     def _compat_ord(value):
         return ord(value) if sys.version_info < (3, 0) else value
@@ -298,7 +305,7 @@ class UDPServer:
             self._req_data(message, address)
         else:
             print('Unknown message type: ' + str(msg_type))
-    
+
     def _res_data(self, message):
         now = time.time()
         for address, timestamp in self.clients.copy().items():
@@ -307,39 +314,24 @@ class UDPServer:
             else:
                 print('[udp] Client disconnected: {0[0]}:{0[1]}'.format(address))
                 del self.clients[address]
-    
-    def _handle_request(self, request):
-        message, address = request
-
-        # client_id = message[12:16]
-        msg_type = message[16:20]
-
-        if msg_type == Message.Types['version']:
-            return
-        elif msg_type == Message.Types['ports']:
-            self._req_ports(message, address)
-        elif msg_type == Message.Types['data']:
-            self._req_data(message, address)
-        else:
-            print('[udp] Unknown message type: ' + str(msg_type))
 
     def report(self, device):
-        if device == None:
+        if device is None:
             return None
-        
-        if device.device == None:
+
+        if device.device is None:
             return None
-        
+
         i = self.slots.index(device) if device in self.slots else -1
 
         if i == -1:
             return None
-        
+
         device_state = device.get_report()
 
         data = [
             i & 0xff,  # pad id
-            0x02 if device.device != None else 0x00,  # state (connected)
+            0x02 if device.device is not None else 0x00,  # state (connected)
             0x02,  # model (generic)
             0x02,  # connection type (usb)
             device.mac[0], device.mac[1], device.mac[2],  # MAC1
@@ -409,7 +401,7 @@ class UDPServer:
 
         data.extend(bytes(struct.pack('<Q', int(time.time() * 10**6))))
 
-        if device.motion_device != None:
+        if device.motion_device is not None:
             if device.motion_device.name == "Nintendo Switch Pro Controller IMU":
                 sensors = [
                     device.accel_y / 4096,
@@ -442,9 +434,9 @@ class UDPServer:
 
         for sensor in sensors:
             data.extend(struct.pack('<f', float(sensor)))
-        
+
         self._res_data(bytes(Message('data', data)))
-    
+
     def report_clean(self, device):
         i = self.slots.index(device) if device in self.slots else -1
 
@@ -453,28 +445,28 @@ class UDPServer:
             0x00,  # state (disconnected)
             0x03,  # model (generic)
             0x01,  # connection type (usb)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # Mac
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00,  # Mac
             0x00,  # battery (charged)
             0x00,  # ?
         ]
 
         self._res_data(bytes(Message('data', data)))
-    
+
     def handle_devices(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
 
         print("Looking for Nintendo Switch controllers...")
-        
+
         while True:
             try:
                 evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
 
                 for d in evdev_devices:
                     if d.name == "Nintendo Switch Left Joy-Con" or \
-                    d.name == "Nintendo Switch Right Joy-Con" or \
-                    d.name == "Nintendo Switch Pro Controller" or \
-                    d.name == "Nintendo Switch Combined Joy-Cons":
-                        found = True if any(my_device.device == d for my_device in self.slots if my_device != None) else False
+                            d.name == "Nintendo Switch Right Joy-Con" or \
+                            d.name == "Nintendo Switch Pro Controller" or \
+                            d.name == "Nintendo Switch Combined Joy-Cons":
+                        found = True if any(my_device.device == d for my_device in self.slots if my_device is not None) else False
 
                         if not found:
                             motion_d = None
@@ -483,36 +475,35 @@ class UDPServer:
                                 if dd.uniq == d.uniq and dd != d:
                                     motion_d = dd
                                     break
-                            
-                            if motion_d == None:
+
+                            if motion_d is None:
                                 print("Select motion provider for "+d.name+": ")
                                 for i, dd in enumerate(evdev_devices):
                                     print(str(i) + " " + dd.name + " " + dd.uniq)
                                 motion_d = evdev_devices[int(input(""))]
 
                             for i in range(4):
-                                if self.slots[i] == None:
+                                if self.slots[i] is None:
                                     self.slots[i] = SwitchDevice(self, d, motion_d)
                                     print("Found "+d.name+" - "+d.uniq)
                                     break
-                            
+
                             self.print_slots()
-                
+
                 for i in range(4):
-                    if self.slots[i] != None and self.slots[i].disconnected == True:
+                    if self.slots[i] is not None and self.slots[i].disconnected is True:
                         self.slots[i] = None
                         self.print_slots()
-                
-                time.sleep(0.2) # sleep for 0.2 seconds
+
+                time.sleep(0.2)  # sleep for 0.2 seconds
             except:
                 pass
-                    
-    
+
     def print_slots(self):
         slots_print = []
 
         for i in range(4):
-            if self.slots[i] == None:
+            if self.slots[i] is None:
                 slots_print.append("0")
             else:
                 if "Left" in self.slots[i].name:
