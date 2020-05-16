@@ -276,37 +276,30 @@ class UDPServer:
     def _req_data(self, message, address):
         flags = self._compat_ord(message[24])
         reg_id = self._compat_ord(message[25])
+        slot_id = self._compat_ord(message[21])
         # reg_mac = message[26:32]
 
         if flags == 0 and reg_id == 0:  # TODO: Check MAC
             if address not in self.clients:
                 print('[udp] Client connected: {0[0]}:{0[1]}'.format(address))
 
-            self.clients[address] = time.time()
-
-    def _handle_request(self, request):
-        message, address = request
-
-        # client_id = message[12:16]
-        msg_type = message[16:20]
-
-        if msg_type == Message.Types['version']:
-            return
-        elif msg_type == Message.Types['ports']:
-            self._req_ports(message, address)
-        elif msg_type == Message.Types['data']:
-            self._req_data(message, address)
-        else:
-            print('Unknown message type: ' + str(msg_type))
-    
-    def _res_data(self, message):
-        now = time.time()
-        for address, timestamp in self.clients.copy().items():
-            if now - timestamp < 5:
-                self.sock.sendto(message, address)
+                self.clients[address] = {
+                    "timestamp": time.time(),
+                    "controllers": [0,0,0,0]
+                }
             else:
-                print('[udp] Client disconnected: {0[0]}:{0[1]}'.format(address))
-                del self.clients[address]
+                self.clients[address]["timestamp"] = time.time()
+                self.clients[address]["controllers"][slot_id] = 1
+    
+    def _res_data(self, controller_index, message):
+        now = time.time()
+        for address, data in self.clients.copy().items():
+            if data["controllers"][controller_index] == 1:
+                if now - data["timestamp"] < 5:
+                    self.sock.sendto(message, address)
+                else:
+                    print('[udp] Client disconnected: {0[0]}:{0[1]}'.format(address))
+                    del self.clients[address]
     
     def _handle_request(self, request):
         message, address = request
@@ -362,10 +355,14 @@ class UDPServer:
         buttons1 |= int(abs_to_button(device_state.get("dpad_left", 0x00))/255) << 7
 
         buttons2 = 0x00
-        buttons2 |= int(abs_to_button(device_state.get("button_l2", 0x00)/255))
-        buttons2 |= int(abs_to_button(device_state.get("button_r2", 0x00)/255)) << 1
-        buttons2 |= int(abs_to_button(device_state.get("button_l1", 0x00)/255)) << 2
-        buttons2 |= int(abs_to_button(device_state.get("button_r1", 0x00)/255)) << 3
+        buttons2 |= int(abs_to_button(device_state.get("button_l2", 0x00))/255)
+        buttons2 |= int(abs_to_button(device_state.get("button_r2", 0x00))/255) << 1
+        buttons2 |= int(abs_to_button(device_state.get("button_l1", 0x00))/255) << 2
+        buttons2 |= int(abs_to_button(device_state.get("button_r1", 0x00))/255) << 3
+        buttons2 |= int(abs_to_button(device_state.get("button_triangle", 0x00))/255) << 4
+        buttons2 |= int(abs_to_button(device_state.get("button_circle", 0x00))/255) << 5
+        buttons2 |= int(abs_to_button(device_state.get("button_cross", 0x00))/255) << 6
+        buttons2 |= int(abs_to_button(device_state.get("button_square", 0x00))/255) << 7
 
         data.extend([
             buttons1,
@@ -443,7 +440,7 @@ class UDPServer:
         for sensor in sensors:
             data.extend(struct.pack('<f', float(sensor)))
         
-        self._res_data(bytes(Message('data', data)))
+        self._res_data(i, bytes(Message('data', data)))
     
     def report_clean(self, device):
         i = self.slots.index(device) if device in self.slots else -1
@@ -458,7 +455,7 @@ class UDPServer:
             0x00,  # ?
         ]
 
-        self._res_data(bytes(Message('data', data)))
+        self._res_data(i, bytes(Message('data', data)))
     
     def handle_devices(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
