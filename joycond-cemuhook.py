@@ -477,9 +477,9 @@ class UDPServer:
                             motion_d = None
 
                             for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
-                                if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs
+                                if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs and should not be assigned to any random evdev device
                                     motion_d = dd
-                                    print("Using " + motion_d.name + " as motion provider")
+                                    print("Using " + motion_d.name + " as motion provider " + d.name)
                                     break
                             
                             if motion_d == None:
@@ -487,7 +487,7 @@ class UDPServer:
                                 for i, dd in enumerate(evdev_devices):
                                     print(str(i) + " " + dd.name + " " + dd.uniq)
                                 motion_d = evdev_devices[int(input(""))]
-                                print("Using " + motion_d.name + " as motion provider")
+                                print("Using " + motion_d.name + " as motion provider for " + d.name)
 
                             for i in range(4):
                                 if self.slots[i] == None:
