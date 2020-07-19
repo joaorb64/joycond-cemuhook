@@ -479,7 +479,7 @@ class UDPServer:
                             for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
                                 if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs and should not be assigned to any random evdev device
                                     motion_d = dd
-                                    print("Using " + motion_d.name + " as motion provider " + d.name)
+                                    print("Using " + motion_d.name + " as motion provider for " + d.name)
                                     break
                             
                             if motion_d == None:
