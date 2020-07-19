@@ -471,14 +471,15 @@ class UDPServer:
                     d.name == "Nintendo Switch Right Joy-Con" or \
                     d.name == "Nintendo Switch Pro Controller" or \
                     d.name == "Nintendo Switch Combined Joy-Cons":
-                        found = True if any(my_device.device == d for my_device in self.slots if my_device != None) else False
+                        found = any(my_device.device == d for my_device in self.slots if my_device != None)
 
                         if not found:
                             motion_d = None
 
-                            for dd in evdev_devices:
-                                if dd.uniq == d.uniq and dd != d:
+                            for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
+                                if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs
                                     motion_d = dd
+                                    print("Using " + motion_d.name + " as motion provider")
                                     break
                             
                             if motion_d == None:
@@ -486,6 +487,7 @@ class UDPServer:
                                 for i, dd in enumerate(evdev_devices):
                                     print(str(i) + " " + dd.name + " " + dd.uniq)
                                 motion_d = evdev_devices[int(input(""))]
+                                print("Using " + motion_d.name + " as motion provider")
 
                             for i in range(4):
                                 if self.slots[i] == None:
