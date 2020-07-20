@@ -474,6 +474,8 @@ class UDPServer:
                         found = any(my_device.device == d for my_device in self.slots if my_device != None)
 
                         if not found:
+                            print("Found ["+d.name+"] - mac: "+d.uniq)
+
                             motion_d = None
 
                             for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
@@ -482,7 +484,7 @@ class UDPServer:
                                     break
                             
                             if motion_d == None:
-                                print("Select motion provider for "+d.name+": ")
+                                print("Select motion provider for ["+d.name+"]: ")
                                 for i, dd in enumerate(evdev_devices):
                                     print(
                                         ("*" if "Nintendo" in dd.name and "IMU" in dd.name else " ") + 
@@ -491,14 +493,13 @@ class UDPServer:
                                 motion_d = evdev_devices[int(input(""))]
                             
                             if motion_d:
-                                print("Using " + motion_d.name + " as motion provider for " + d.name)
+                                print("Using [" + motion_d.name + "] as motion provider for [" + d.name + "]")
                             else:
-                                print("Not using motion inputs for " + d.name)
+                                print("Not using motion inputs for [" + d.name + "]")
 
                             for i in range(4):
                                 if self.slots[i] == None:
                                     self.slots[i] = SwitchDevice(self, d, motion_d)
-                                    print("Found "+d.name+" - mac: "+d.uniq)
                                     break
                             
                             self.print_slots()
