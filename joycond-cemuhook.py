@@ -479,20 +479,26 @@ class UDPServer:
                             for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
                                 if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs and should not be assigned to any random evdev device
                                     motion_d = dd
-                                    print("Using " + motion_d.name + " as motion provider for " + d.name)
                                     break
                             
                             if motion_d == None:
                                 print("Select motion provider for "+d.name+": ")
                                 for i, dd in enumerate(evdev_devices):
-                                    print(str(i) + " " + dd.name + " " + dd.uniq)
+                                    print(
+                                        ("*" if "Nintendo" in dd.name and "IMU" in dd.name else " ") + 
+                                        str(i) + " " + dd.name + " - mac: " + dd.uniq
+                                    )
                                 motion_d = evdev_devices[int(input(""))]
+                            
+                            if motion_d:
                                 print("Using " + motion_d.name + " as motion provider for " + d.name)
+                            else:
+                                print("Not using motion inputs for " + d.name)
 
                             for i in range(4):
                                 if self.slots[i] == None:
                                     self.slots[i] = SwitchDevice(self, d, motion_d)
-                                    print("Found "+d.name+" - "+d.uniq)
+                                    print("Found "+d.name+" - mac: "+d.uniq)
                                     break
                             
                             self.print_slots()
@@ -502,7 +508,7 @@ class UDPServer:
                         self.slots[i] = None
                         self.print_slots()
                 
-                time.sleep(0.2) # sleep for 0.2 seconds
+                time.sleep(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
             except:
                 pass
                     
