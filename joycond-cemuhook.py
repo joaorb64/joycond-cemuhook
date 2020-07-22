@@ -367,7 +367,7 @@ class UDPServer:
         data.extend([
             buttons1,
             buttons2,
-            abs_to_button(device_state.get("button_ps", 0x00) * 127 + 128),  # PS
+            abs_to_button(device_state.get("button_ps", 0x00)),  # PS
             0x00,  # Touch
 
             int(device_state.get("left_analog_x", 0x00) * 127) + 128,  # position left x
@@ -375,21 +375,21 @@ class UDPServer:
             int(device_state.get("right_analog_x", 0x00) * 127) + 128,  # position right x
             int(device_state.get("right_analog_y", 0x00) * 127) + 128,  # position right y
 
-            abs_to_button(device_state.get("dpad_left", 0x00) * 127 + 128),  # dpad left
-            abs_to_button(device_state.get("dpad_down", 0x00) * 127 + 128),  # dpad down
-            abs_to_button(device_state.get("dpad_right", 0x00) * 127 + 128),  # dpad right
-            abs_to_button(device_state.get("dpad_up", 0x00) * 127 + 128),  # dpad up
+            abs_to_button(device_state.get("dpad_left", 0x00)),  # dpad left
+            abs_to_button(device_state.get("dpad_down", 0x00)),  # dpad down
+            abs_to_button(device_state.get("dpad_right", 0x00)),  # dpad right
+            abs_to_button(device_state.get("dpad_up", 0x00)),  # dpad up
 
-            abs_to_button(device_state.get("button_square", 0x00) * 127 + 128),  # square
-            abs_to_button(device_state.get("button_cross", 0x00) * 127 + 128),  # cross
-            abs_to_button(device_state.get("button_circle", 0x00) * 127 + 128),  # circle
-            abs_to_button(device_state.get("button_triangle", 0x00) * 127 + 128),  # triange
+            abs_to_button(device_state.get("button_square", 0x00)),  # square
+            abs_to_button(device_state.get("button_cross", 0x00)),  # cross
+            abs_to_button(device_state.get("button_circle", 0x00)),  # circle
+            abs_to_button(device_state.get("button_triangle", 0x00)),  # triange
 
-            abs_to_button(device_state.get("button_r1", 0x00) * 127 + 128),  # r1
-            abs_to_button(device_state.get("button_l1", 0x00) * 127 + 128),  # l1
+            abs_to_button(device_state.get("button_r1", 0x00)),  # r1
+            abs_to_button(device_state.get("button_l1", 0x00)),  # l1
 
-            abs_to_button(device_state.get("button_r2", 0x00) * 127 + 128),  # r2
-            abs_to_button(device_state.get("button_l2", 0x00) * 127 + 128),  # l2
+            abs_to_button(device_state.get("button_r2", 0x00)),  # r2
+            abs_to_button(device_state.get("button_l2", 0x00)),  # l2
 
             0x00,  # track pad first is active (false)
             0x00,  # track pad first id
