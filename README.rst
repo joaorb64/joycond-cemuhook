@@ -21,6 +21,8 @@ How to use
 - Run joycond-cemuhook: ``python3 joycond-cemuhook.py``
 - Open a compatible emulator and enable cemuhook UDP motion input
 
+Head to this project's `wiki <https://github.com/joaorb64/joycond-cemuhook/wiki>`_ for detailed instructions on how to configure Cemuhook on emulators.
+
 Media
 --------
 
