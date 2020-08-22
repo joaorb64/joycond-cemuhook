@@ -121,29 +121,16 @@ class SwitchDevice:
                 for event in self.motion_device.read_loop():
                     if event.type == evdev.ecodes.SYN_REPORT:
                         self.server.report(self)
-
                         self.motion_x = 0
                         self.motion_y = 0
                         self.motion_z = 0
                     if event.type == evdev.ecodes.EV_ABS:
                         if event.code == evdev.ecodes.ABS_RX:
-                            if abs(event.value) > 100:
-                                if event.value > 0:
-                                    self.motion_x += event.value - 100
-                                else:
-                                    self.motion_x += event.value + 100
+                            self.motion_x += event.value / 1000
                         if event.code == evdev.ecodes.ABS_RY:
-                            if abs(event.value) > 100:
-                                if event.value > 0:
-                                    self.motion_y += event.value - 100
-                                else:
-                                    self.motion_y += event.value + 100
+                            self.motion_y += event.value / 1000
                         if event.code == evdev.ecodes.ABS_RZ:
-                            if abs(event.value) > 100:
-                                if event.value > 0:
-                                    self.motion_z += event.value - 100
-                                else:
-                                    self.motion_z += event.value + 100
+                            self.motion_z += event.value / 1000
                         if event.code == evdev.ecodes.ABS_X:
                             self.accel_x = event.value
                         if event.code == evdev.ecodes.ABS_Y:
@@ -407,33 +394,14 @@ class UDPServer:
         data.extend(bytes(struct.pack('<Q', int(time.time() * 10**6))))
 
         if device.motion_device != None:
-            if device.motion_device.name == "Nintendo Switch Pro Controller IMU":
-                sensors = [
-                    device.accel_y / 4096,
-                    - device.accel_z / 4096,
-                    device.accel_x / 4096,
-                    - device.motion_y * 180 / 3.14 / 1000,
-                    - device.motion_z * 180 / 3.14 / 1000,
-                    device.motion_x * 180 / 3.14 / 1000,
-                ]
-            elif device.motion_device.name == "Nintendo Switch Right Joy-Con IMU":
-                sensors = [
-                    - device.accel_y / 4096,
-                    device.accel_z / 4096,
-                    device.accel_x / 4096,
-                    device.motion_y * 180 / 3.14 / 1000,
-                    device.motion_z * 180 / 3.14 / 1000,
-                    device.motion_x * 180 / 3.14 / 1000,
-                ]
-            else:
-                sensors = [
-                    device.accel_y / 4096,
-                    - device.accel_z / 4096,
-                    device.accel_x / 4096,
-                    - device.motion_y * 180 / 3.14 / 1000,
-                    - device.motion_z * 180 / 3.14 / 1000,
-                    device.motion_x * 180 / 3.14 / 1000,
-                ]
+            sensors = [
+                device.accel_y / 4096,
+                - device.accel_z / 4096,
+                device.accel_x / 4096,
+                - device.motion_y * 180 / 3.14 / 1000,
+                - device.motion_z * 180 / 3.14 / 1000,
+                device.motion_x * 180 / 3.14 / 1000,
+            ]
         else:
             sensors = [0, 0, 0, 0, 0, 0]
 
