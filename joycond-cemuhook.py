@@ -158,9 +158,8 @@ class SwitchDevice:
                             continue
 
                         if event.code == evdev.ecodes.ecodes.get(key_mine.replace("-", ""), None):
-                            capabilities = self.device_capabilities
-                            axis = next(axis for axis in capabilities[3] if axis[0] == evdev.ecodes.ecodes.get(key_mine.replace("-", ""), None))
-                            self.state[ps_key] = event.value / axis[1].max
+                            axis = self.device.absinfo(evdev.ecodes.ecodes.get(key_mine.replace("-", "")))
+                            self.state[ps_key] = event.value / axis.max
                             self.state[ps_key] = clamp(self.state[ps_key], -1, 1)
                             if(key_mine[0] == "-"):
                                 self.state[ps_key] = -self.state[ps_key]
