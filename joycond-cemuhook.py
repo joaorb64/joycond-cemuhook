@@ -59,7 +59,7 @@ class SwitchDevice:
         self.serial = motion_device.uniq if motion_device.uniq != "" else "00:00:00:00:00:00"
         self.mac = [int("0x"+part, 16) for part in self.serial.split(":")]
 
-        self.device_capabilities = device.capabilities(absinfo=False)
+        self.device_capabilities = device.capabilities(absinfo=True)
 
         self.state = {
             "left_analog_x": 0x00,
@@ -124,19 +124,22 @@ class SwitchDevice:
                         self.motion_x = 0
                         self.motion_y = 0
                         self.motion_z = 0
-                    if event.type == evdev.ecodes.EV_ABS:
+                    elif event.type == evdev.ecodes.EV_ABS:
+                        # Get info about the axis we're reading the event from
+                        axis = self.motion_device.absinfo(event.code)
+
                         if event.code == evdev.ecodes.ABS_RX:
-                            self.motion_x += event.value / 1000
+                            self.motion_x += event.value / axis.resolution
                         if event.code == evdev.ecodes.ABS_RY:
-                            self.motion_y += event.value / 1000
+                            self.motion_y += event.value / axis.resolution
                         if event.code == evdev.ecodes.ABS_RZ:
-                            self.motion_z += event.value / 1000
+                            self.motion_z += event.value / axis.resolution
                         if event.code == evdev.ecodes.ABS_X:
-                            self.accel_x = event.value
+                            self.accel_x = event.value / axis.resolution
                         if event.code == evdev.ecodes.ABS_Y:
-                            self.accel_y = event.value
+                            self.accel_y = event.value / axis.resolution
                         if event.code == evdev.ecodes.ABS_Z:
-                            self.accel_z = event.value
+                            self.accel_z = event.value / axis.resolution
             except(OSError, RuntimeError) as e:
                 print("Device motion disconnected: " + self.name)
                 asyncio.get_event_loop().close()
@@ -155,7 +158,7 @@ class SwitchDevice:
                             continue
 
                         if event.code == evdev.ecodes.ecodes.get(key_mine.replace("-", ""), None):
-                            capabilities = self.device.capabilities()
+                            capabilities = self.device_capabilities
                             axis = next(axis for axis in capabilities[3] if axis[0] == evdev.ecodes.ecodes.get(key_mine.replace("-", ""), None))
                             self.state[ps_key] = event.value / axis[1].max
                             self.state[ps_key] = clamp(self.state[ps_key], -1, 1)
@@ -395,12 +398,14 @@ class UDPServer:
 
         if device.motion_device != None:
             sensors = [
-                device.accel_y / 4096,
-                - device.accel_z / 4096,
-                device.accel_x / 4096,
-                - device.motion_y * 180 / 3.14 / 1000,
-                - device.motion_z * 180 / 3.14 / 1000,
-                device.motion_x * 180 / 3.14 / 1000,
+                # Acceleration in g's
+                device.accel_y,
+                - device.accel_z,
+                device.accel_x,
+                # Gyro rotation in deg/s
+                - device.motion_y,
+                - device.motion_z,
+                device.motion_x,
             ]
         else:
             sensors = [0, 0, 0, 0, 0, 0]
