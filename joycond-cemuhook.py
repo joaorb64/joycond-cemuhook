@@ -106,13 +106,24 @@ class SwitchDevice:
         self.accel_y = 0
         self.accel_z = 0
 
+        # Input reading thread
         self.event_thread = Thread(target=self.handle_events)
         self.event_thread.daemon = True
         self.event_thread.start()
 
+        # Motion reading thread
         self.motion_event_thread = Thread(target=self.handle_motion_events)
         self.motion_event_thread.daemon = True
         self.motion_event_thread.start()
+
+        # Battery level reading thread
+        self.dbus_interface = self.get_battery_dbus_interface()
+        self.battery_level = None
+
+        if self.dbus_interface:
+            self.battery_thread = Thread(target=self.get_battery_level)
+            self.battery_thread.daemon = True
+            self.battery_thread.start()
     
     def handle_motion_events(self):
         if self.motion_device:
@@ -120,7 +131,7 @@ class SwitchDevice:
                 asyncio.set_event_loop(asyncio.new_event_loop())
                 for event in self.motion_device.read_loop():
                     if event.type == evdev.ecodes.SYN_REPORT:
-                        self.server.report(self)
+                        self.server.report(self, True)
                         self.motion_x = 0
                         self.motion_y = 0
                         self.motion_z = 0
@@ -175,7 +186,7 @@ class SwitchDevice:
             self.disconnected = True
             asyncio.get_event_loop().close()
     
-    def get_battery_level(self):
+    def get_battery_dbus_interface(self):
         bus = dbus.SystemBus()
         upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
 
@@ -187,24 +198,30 @@ class SwitchDevice:
             properties = iface.GetAll("org.freedesktop.UPower.Device")
 
             if properties["Serial"] == self.serial:
-                return properties["Percentage"]
-        
+                return iface
         return None
+    
+    def get_battery_level(self):
+        try:
+            while(self.dbus_interface != None):
+                properties = self.dbus_interface.GetAll("org.freedesktop.UPower.Device")
+                self.battery_level = properties["Percentage"]
+                time.sleep(30)
+        except:
+            self.battery_level = None
     
     def get_report(self):
         report = self.state
 
-        battery = self.get_battery_level()
-
-        if battery == None:
+        if self.battery_level == None:
             report["battery"] = 0x00
-        elif battery < 10:
+        elif self.battery_level < 10:
             report["battery"] = 0x01
-        elif battery < 25:
+        elif self.battery_level < 25:
             report["battery"] = 0x02
-        elif battery < 75:
+        elif self.battery_level < 75:
             report["battery"] = 0x03
-        elif battery < 90:
+        elif self.battery_level < 90:
             report["battery"] = 0x04
         else:
             report["battery"] = 0x05
@@ -305,7 +322,7 @@ class UDPServer:
         else:
             print('[udp] Unknown message type: ' + str(msg_type))
 
-    def report(self, device):
+    def report(self, device, report_motion=False):
         if device == None:
             return None
         
@@ -406,6 +423,11 @@ class UDPServer:
                 - device.motion_z,
                 device.motion_x,
             ]
+
+            if report_motion == False:
+                sensors[3] = 0
+                sensors[4] = 0
+                sensors[5] = 0
         else:
             sensors = [0, 0, 0, 0, 0, 0]
 
