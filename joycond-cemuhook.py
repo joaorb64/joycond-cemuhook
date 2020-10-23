@@ -10,11 +10,12 @@ import dbus
 import json
 import argparse
 import subprocess
+from termcolor import colored
 
 def print_verbose(str):
     global args
     if args.verbose:
-        print("Debug: "+str)
+        print(colored("Debug: ", "red", attrs=["bold"])+str)
 
 def clamp(my_value, min_value, max_value):
     return max(min(my_value, max_value), min_value)
@@ -124,10 +125,13 @@ class SwitchDevice:
         self.motion_event_thread.start()
 
         # Battery level reading thread
-        self.dbus_interface = self.get_battery_dbus_interface()
         self.battery_level = None
+        self.battery_state = None
+        self.dbus_interface = None
+        self.dbus_properties_interface = None
+        self.get_battery_dbus_interface()
 
-        if self.dbus_interface:
+        if self.dbus_interface and self.dbus_properties_interface:
             self.battery_thread = Thread(target=self.get_battery_level)
             self.battery_thread.daemon = True
             self.battery_thread.start()
@@ -203,23 +207,38 @@ class SwitchDevice:
 
         for device in upower_list:
             dev = bus.get_object('org.freedesktop.UPower', device)
-            iface = dbus.Interface(dev, 'org.freedesktop.DBus.Properties')
-            properties = iface.GetAll("org.freedesktop.UPower.Device")
+
+            dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
+            dbus_interface.Refresh()
+
+            dbus_properties_interface = dbus.Interface(dev, 'org.freedesktop.DBus.Properties')
+            properties = dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
 
             if properties["Serial"] == self.serial:
-                print_verbose("Found dbus interface for battery level reading")
-                return iface
-        return None
+                self.dbus_interface = dbus_interface
+                self.dbus_properties_interface = dbus_properties_interface
+                self.battery_level = properties["Percentage"]
+                self.battery_state = properties["State"]
+                print_verbose("Found dbus interface for battery level reading. Value: "+str(self.battery_level))
+                return True
+        return False
     
     def get_battery_level(self):
         try:
             print_verbose("Battery level reading thread started")
             while(self.dbus_interface != None):
-                properties = self.dbus_interface.GetAll("org.freedesktop.UPower.Device")
-                self.battery_level = properties["Percentage"]
+                self.dbus_interface.Refresh()
+                properties = self.dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
+                if properties["Percentage"] != self.battery_level:
+                    print_verbose("Battery level changed")
+                    self.battery_level = properties["Percentage"]
+                    self.battery_state = properties["State"]
+                    self.server.print_slots()
                 time.sleep(30)
-        except:
+        except Exception as e:
+            print(e)
             self.battery_level = None
+            self.battery_state = None
     
     def get_report(self):
         report = self.state
@@ -515,27 +534,50 @@ class UDPServer:
                         self.print_slots()
                 
                 time.sleep(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
-            except:
-                pass
+            except Exception as e:
+                print(e)
                     
     
     def print_slots(self):
-        slots_print = []
+        print(colored("======================== Slots ========================", attrs=["bold"]))
+        
+        print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
+            .format("Device", "Battery Lv", "Motion Dev", "MAC Addr"))
 
         for i in range(4):
             if self.slots[i] == None:
-                slots_print.append("0")
+                print(str(i+1)+" ❎ ")
             else:
+                device = str(i+1)+" "
                 if "Left" in self.slots[i].name:
-                    slots_print.append("L")
+                    device += "🕹️ L"
                 elif "Right" in self.slots[i].name:
-                    slots_print.append("R")
+                    device += "🕹️ R"
                 elif "Combined" in self.slots[i].name:
-                    slots_print.append("L+R")
+                    device += "🎮 L+R"
                 else:
-                    slots_print.append("Pro")
+                    device += "🎮 Pro"
+                
+                battery = ""
+                if self.slots[i].battery_level:
+                    battery += str(self.slots[i].battery_level)
+                    battery += " "
+                    battery += chr(ord('▁')-1 + int(self.slots[i].battery_level/10))
+                else:
+                    battery += "❌"
 
-        print("Slots: "+str(slots_print))
+                motion_d = ""
+                if self.slots[i].motion_device:
+                    motion_d += "✔️"
+                else:
+                    motion_d += "❌"
+                
+                mac = self.slots[i].serial
+
+                print(("{:<14} "+colored("{:<12}", "green")+" {:<12} {:<12}")
+                    .format(device, battery, motion_d, mac))
+
+        print(colored("=======================================================", attrs=["bold"]))
 
     def _worker(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
