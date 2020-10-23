@@ -8,6 +8,13 @@ import time
 import asyncio
 import dbus
 import json
+import argparse
+import subprocess
+
+def print_verbose(str):
+    global args
+    if args.verbose:
+        print("Debug: "+str)
 
 def clamp(my_value, min_value, max_value):
     return max(min(my_value, max_value), min_value)
@@ -126,6 +133,7 @@ class SwitchDevice:
             self.battery_thread.start()
     
     def handle_motion_events(self):
+        print_verbose("Motion events thread started")
         if self.motion_device:
             try:
                 asyncio.set_event_loop(asyncio.new_event_loop())
@@ -156,6 +164,7 @@ class SwitchDevice:
                 asyncio.get_event_loop().close()
     
     def handle_events(self):
+        print_verbose("Input events thread started")
         try:
             asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -198,11 +207,13 @@ class SwitchDevice:
             properties = iface.GetAll("org.freedesktop.UPower.Device")
 
             if properties["Serial"] == self.serial:
+                print_verbose("Found dbus interface for battery level reading")
                 return iface
         return None
     
     def get_battery_level(self):
         try:
+            print_verbose("Battery level reading thread started")
             while(self.dbus_interface != None):
                 properties = self.dbus_interface.GetAll("org.freedesktop.UPower.Device")
                 self.battery_level = properties["Percentage"]
@@ -542,6 +553,28 @@ class UDPServer:
 
         self.device_thread.join()
 
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-v", "--verbose", help="Show debug messages", action="store_true")
+args = parser.parse_args()
+
+# Check if hid_nintendo module is installed
+process = subprocess.Popen(["modinfo", "hid_nintendo"], stdout=subprocess.DEVNULL)
+process.communicate()
+hid_nintendo_installed = process.returncode
+
+if hid_nintendo_installed == 1:
+    print("Seems like hid_nintendo is not installed.")
+    exit()
+
+# Check if hid_nintendo module is loaded
+process = subprocess.Popen(["/bin/sh", "-c", 'lsmod | grep hid_nintendo'], stdout=subprocess.DEVNULL)
+process.communicate()
+hid_nintendo_loaded = process.returncode
+
+if hid_nintendo_loaded == 1:
+    print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
+    exit()
 
 server = UDPServer('127.0.0.1', 26760)
 server.start()
