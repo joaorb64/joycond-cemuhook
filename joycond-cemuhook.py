@@ -103,7 +103,7 @@ class SwitchDevice:
 
         self.keymap = None
 
-        with open(self.name+'.json', 'r') as f:
+        with open('profiles/'+self.name+'.json', 'r') as f:
             self.keymap = json.load(f)
 
         self.motion_x = 0

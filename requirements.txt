@@ -1,0 +1,5 @@
+evdev
+asyncio
+dbus-python
+argparse
+termcolor
