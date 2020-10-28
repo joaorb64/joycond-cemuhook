@@ -23,7 +23,7 @@ How to use
 - Run ``pip3 install -r requirements.txt`` to install extra dependencies
 - Run ``python3 joycond-cemuhook.py`` to start joycond-cemuhook
 
-From now on, you'll only need to run `python3 joycond-cemuhook` with a terminal on its directory.
+From now on, you'll only need to run ``python3 joycond-cemuhook`` from a terminal on its directory.
 
 - Connect your Nintendo Switch controllers and assign them as intended (using the respective L+R)
 - Open a compatible emulator and enable cemuhook UDP motion input
