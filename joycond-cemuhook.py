@@ -267,6 +267,7 @@ class UDPServer:
     def __init__(self, host='', port=26760):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((host, port))
+        print_verbose("Started UDP server with ip "+str(host)+", port "+str(port))
         self.counter = 0
         self.clients = dict()
         self.slots = [None, None, None, None]
@@ -597,7 +598,9 @@ class UDPServer:
 
 
 parser = argparse.ArgumentParser()
-parser.add_argument("-v", "--verbose", help="Show debug messages", action="store_true")
+parser.add_argument("-v", "--verbose", help="show debug messages", action="store_true")
+parser.add_argument("-ip", "--ip", help="set custom port, default is 127.0.0.1")
+parser.add_argument("-p", "--port", help="set custom port, default is 26760")
 args = parser.parse_args()
 
 # Check if hid_nintendo module is installed
@@ -618,5 +621,13 @@ if hid_nintendo_loaded == 1:
     print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
     exit()
 
-server = UDPServer('127.0.0.1', 26760)
+ip = '127.0.0.1'
+if args.ip:
+    ip = args.ip
+
+port = 26760
+if args.port:
+    port = int(args.port)
+
+server = UDPServer(ip, port)
 server.start()
