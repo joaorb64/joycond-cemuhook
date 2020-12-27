@@ -441,7 +441,7 @@ class UDPServer:
             0x00, 0x00,  # trackpad second y
         ])
 
-        data.extend(bytes(struct.pack('<Q', int(time.time() * 10**6))))
+        data.extend(bytes(struct.pack('<Q', time.time_ns() // 1000)))
 
         if device.motion_device != None:
             sensors = [
