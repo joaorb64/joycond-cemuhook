@@ -119,6 +119,8 @@ class SwitchDevice:
             self.event_thread = Thread(target=self.handle_events)
             self.event_thread.daemon = True
             self.event_thread.start()
+        else:
+            self.event_thread = None
 
         # Motion reading thread
         self.motion_event_thread = Thread(target=self.handle_motion_events)
@@ -137,6 +139,10 @@ class SwitchDevice:
             self.battery_thread.daemon = True
             self.battery_thread.start()
     
+    def disconnect(self):
+        self.server.report_clean(self)
+        self.disconnected = True
+
     def handle_motion_events(self):
         print_verbose("Motion events thread started")
         if self.motion_device:
@@ -166,6 +172,8 @@ class SwitchDevice:
                             self.accel_z = event.value / axis.resolution
             except(OSError, RuntimeError) as e:
                 print("Device motion disconnected: " + self.name)
+                if not self.event_thread:
+                    self.disconnect()
                 asyncio.get_event_loop().close()
     
     def handle_events(self):
@@ -195,8 +203,7 @@ class SwitchDevice:
                             self.state[ps_key] = 0xFF if event.value == 1 else 0x00
         except(OSError, RuntimeError) as e:
             print("Device disconnected: " + self.name)
-            self.server.report_clean(self)
-            self.disconnected = True
+            self.disconnect()
             asyncio.get_event_loop().close()
     
     def get_battery_dbus_interface(self):
