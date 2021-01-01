@@ -12,6 +12,8 @@ import argparse
 import subprocess
 from termcolor import colored
 
+MAX_PADS = 4
+
 def print_verbose(str):
     global args
     if args.verbose:
@@ -270,7 +272,7 @@ class UDPServer:
         print_verbose("Started UDP server with ip "+str(host)+", port "+str(port))
         self.counter = 0
         self.clients = dict()
-        self.slots = [None, None, None, None]
+        self.slots = [None] * MAX_PADS
         self.locks = [asyncio.Lock(), asyncio.Lock(), asyncio.Lock(), asyncio.Lock()]
         self.lock = asyncio.Lock()
 
@@ -292,8 +294,7 @@ class UDPServer:
                 0x02,  # state (connected)
                 0x03,  # model (generic)
                 0x01,  # connection type (usb)
-                device.mac[0], device.mac[1], device.mac[2],  # MAC1
-                device.mac[3], device.mac[4], device.mac[5],  # MAC2
+                *device.mac,  # MAC
                 device.state["battery"],  # battery (charged)
                 0x00,  # ?
             ]
@@ -372,8 +373,7 @@ class UDPServer:
             0x02 if device.device != None else 0x00,  # state (connected)
             0x02,  # model (generic)
             0x02,  # connection type (usb)
-            device.mac[0], device.mac[1], device.mac[2],  # MAC1
-            device.mac[3], device.mac[4], device.mac[5],  # MAC2
+            *device.mac,  # MAC
             device_state["battery"],  # battery (charged)
             0x01  # is active (true)
         ]
@@ -492,10 +492,10 @@ class UDPServer:
                 evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
 
                 for d in evdev_devices:
-                    if d.name == "Nintendo Switch Left Joy-Con" or \
-                    d.name == "Nintendo Switch Right Joy-Con" or \
-                    d.name == "Nintendo Switch Pro Controller" or \
-                    d.name == "Nintendo Switch Combined Joy-Cons":
+                    if d.name in ["Nintendo Switch Left Joy-Con",
+                                  "Nintendo Switch Right Joy-Con",
+                                  "Nintendo Switch Pro Controller",
+                                  "Nintendo Switch Combined Joy-Cons"]:
                         found = any(my_device.device == d for my_device in self.slots if my_device != None)
 
                         if not found:
@@ -522,15 +522,15 @@ class UDPServer:
                             else:
                                 print("Not using motion inputs for [" + d.name + "]")
 
-                            for i in range(4):
-                                if self.slots[i] == None:
+                            for i, slot in enumerate(self.slots):
+                                if not slot:
                                     self.slots[i] = SwitchDevice(self, d, motion_d)
                                     break
                             
                             self.print_slots()
                 
-                for i in range(4):
-                    if self.slots[i] != None and self.slots[i].disconnected == True:
+                for i, slot in enumerate(self.slots):
+                    if slot and slot.disconnected:
                         self.slots[i] = None
                         self.print_slots()
                 
@@ -545,38 +545,33 @@ class UDPServer:
         print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
             .format("Device", "Battery Lv", "Motion Dev", "MAC Addr"))
 
-        for i in range(4):
-            if self.slots[i] == None:
+        for i, slot in enumerate(self.slots):
+            if not slot:
                 print(str(i+1)+" ❎ ")
             else:
                 device = str(i+1)+" "
-                if "Left" in self.slots[i].name:
+                if "Left" in slot.name:
                     device += "🕹️ L"
-                elif "Right" in self.slots[i].name:
+                elif "Right" in slot.name:
                     device += "🕹️ R"
-                elif "Combined" in self.slots[i].name:
+                elif "Combined" in slot.name:
                     device += "🎮 L+R"
                 else:
                     device += "🎮 Pro"
                 
-                battery = ""
-                if self.slots[i].battery_level:
-                    battery += str(self.slots[i].battery_level)
-                    battery += " "
-                    battery += chr(ord('▁')-1 + int(self.slots[i].battery_level/10))
+                if slot.battery_level:
+                    battery = F"{str(slot.battery_level)} {chr(ord('▁') + int(slot.battery_level / 10) - 1)}"
                 else:
-                    battery += "❌"
+                    battery = "❌"
 
-                motion_d = ""
-                if self.slots[i].motion_device:
-                    motion_d += "✔️"
+                if slot.motion_device:
+                    motion_d = "✔️"
                 else:
-                    motion_d += "❌"
+                    motion_d = "❌"
                 
-                mac = self.slots[i].serial
+                mac = slot.serial
 
-                print(("{:<14} "+colored("{:<12}", "green")+" {:<12} {:<12}")
-                    .format(device, battery, motion_d, mac))
+                print(F'{device:<14} {colored(F"{battery:<12}", "green")} {motion_d:<12} {mac:<12}')
 
         print(colored("=======================================================", attrs=["bold"]))
 
@@ -599,8 +594,8 @@ class UDPServer:
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-v", "--verbose", help="show debug messages", action="store_true")
-parser.add_argument("-ip", "--ip", help="set custom port, default is 127.0.0.1")
-parser.add_argument("-p", "--port", help="set custom port, default is 26760")
+parser.add_argument("-ip", "--ip", help="set custom port, default is 127.0.0.1", default="127.0.0.1")
+parser.add_argument("-p", "--port", help="set custom port, default is 26760", type=int, default=26760)
 args = parser.parse_args()
 
 # Check if hid_nintendo module is installed
@@ -621,13 +616,5 @@ if hid_nintendo_loaded == 1:
     print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
     exit()
 
-ip = '127.0.0.1'
-if args.ip:
-    ip = args.ip
-
-port = 26760
-if args.port:
-    port = int(args.port)
-
-server = UDPServer(ip, port)
+server = UDPServer(args.ip, args.port)
 server.start()
