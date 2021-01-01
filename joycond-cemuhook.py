@@ -12,6 +12,8 @@ import argparse
 import subprocess
 from termcolor import colored
 
+MAX_PADS = 4
+
 def print_verbose(str):
     global args
     if args.verbose:
@@ -55,7 +57,7 @@ class Message(list):
         self[8:12] = bytes(struct.pack('<I', crc))
 
 class SwitchDevice:
-    def __init__(self, server, device, motion_device):
+    def __init__(self, server, device, motion_device, handle_events = True):
         self.server = server
 
         self.device = device
@@ -66,8 +68,6 @@ class SwitchDevice:
         self.name = device.name
         self.serial = motion_device.uniq if motion_device.uniq != "" else "00:00:00:00:00:00"
         self.mac = [int("0x"+part, 16) for part in self.serial.split(":")]
-
-        self.device_capabilities = device.capabilities(absinfo=True)
 
         self.state = {
             "left_analog_x": 0x00,
@@ -115,9 +115,12 @@ class SwitchDevice:
         self.accel_z = 0
 
         # Input reading thread
-        self.event_thread = Thread(target=self.handle_events)
-        self.event_thread.daemon = True
-        self.event_thread.start()
+        if handle_events:
+            self.event_thread = Thread(target=self.handle_events)
+            self.event_thread.daemon = True
+            self.event_thread.start()
+        else:
+            self.event_thread = None
 
         # Motion reading thread
         self.motion_event_thread = Thread(target=self.handle_motion_events)
@@ -136,6 +139,10 @@ class SwitchDevice:
             self.battery_thread.daemon = True
             self.battery_thread.start()
     
+    def disconnect(self):
+        self.server.report_clean(self)
+        self.disconnected = True
+
     def handle_motion_events(self):
         print_verbose("Motion events thread started")
         if self.motion_device:
@@ -165,6 +172,8 @@ class SwitchDevice:
                             self.accel_z = event.value / axis.resolution
             except(OSError, RuntimeError) as e:
                 print("Device motion disconnected: " + self.name)
+                if not self.event_thread:
+                    self.disconnect()
                 asyncio.get_event_loop().close()
     
     def handle_events(self):
@@ -192,11 +201,9 @@ class SwitchDevice:
                     for ps_key in self.keymap:
                         if event.code == evdev.ecodes.ecodes.get(self.keymap.get(ps_key, None), None):
                             self.state[ps_key] = 0xFF if event.value == 1 else 0x00
-
         except(OSError, RuntimeError) as e:
             print("Device disconnected: " + self.name)
-            self.server.report_clean(self)
-            self.disconnected = True
+            self.disconnect()
             asyncio.get_event_loop().close()
     
     def get_battery_dbus_interface(self):
@@ -270,7 +277,7 @@ class UDPServer:
         print_verbose("Started UDP server with ip "+str(host)+", port "+str(port))
         self.counter = 0
         self.clients = dict()
-        self.slots = [None, None, None, None]
+        self.slots = [None] * MAX_PADS
         self.locks = [asyncio.Lock(), asyncio.Lock(), asyncio.Lock(), asyncio.Lock()]
         self.lock = asyncio.Lock()
 
@@ -292,8 +299,7 @@ class UDPServer:
                 0x02,  # state (connected)
                 0x03,  # model (generic)
                 0x01,  # connection type (usb)
-                device.mac[0], device.mac[1], device.mac[2],  # MAC1
-                device.mac[3], device.mac[4], device.mac[5],  # MAC2
+                *device.mac,  # MAC
                 device.state["battery"],  # battery (charged)
                 0x00,  # ?
             ]
@@ -372,8 +378,7 @@ class UDPServer:
             0x02 if device.device != None else 0x00,  # state (connected)
             0x02,  # model (generic)
             0x02,  # connection type (usb)
-            device.mac[0], device.mac[1], device.mac[2],  # MAC1
-            device.mac[3], device.mac[4], device.mac[5],  # MAC2
+            *device.mac,  # MAC
             device_state["battery"],  # battery (charged)
             0x01  # is active (true)
         ]
@@ -482,6 +487,12 @@ class UDPServer:
 
         self._res_data(i, bytes(Message('data', data)))
     
+    def add_device(self, d, motion_d, handle_devices = True):
+        for i, slot in enumerate(self.slots):
+            if not slot:
+                self.slots[i] = SwitchDevice(self, d, motion_d, handle_devices)
+                return i
+
     def handle_devices(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -492,45 +503,53 @@ class UDPServer:
                 evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
 
                 for d in evdev_devices:
-                    if d.name == "Nintendo Switch Left Joy-Con" or \
-                    d.name == "Nintendo Switch Right Joy-Con" or \
-                    d.name == "Nintendo Switch Pro Controller" or \
-                    d.name == "Nintendo Switch Combined Joy-Cons":
+                    if d.name in ["Nintendo Switch Left Joy-Con",
+                                  "Nintendo Switch Right Joy-Con",
+                                  "Nintendo Switch Pro Controller",
+                                  "Nintendo Switch Combined Joy-Cons"]:
                         found = any(my_device.device == d for my_device in self.slots if my_device != None)
 
                         if not found:
                             print("Found ["+d.name+"] - mac: "+d.uniq)
 
-                            motion_d = None
+                            motion_d = []
 
                             for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
                                 if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs and should not be assigned to any random evdev device
-                                    motion_d = dd
+                                    motion_d.append(dd)
                                     break
                             
-                            if motion_d == None:
-                                print("Select motion provider for ["+d.name+"]: ")
+                            if not motion_d:
+                                print("Select motion provider(s) for ["+d.name+"]: ")
                                 for i, dd in enumerate(evdev_devices):
                                     print(
                                         ("*" if "Nintendo" in dd.name and "IMU" in dd.name else " ") + 
                                         str(i) + " " + dd.name + " - mac: " + dd.uniq
                                     )
-                                motion_d = evdev_devices[int(input(""))]
+
+                                for i in input("").split():
+                                    try:
+                                        motion_d.append(evdev_devices[int(i)])
+                                    except (ValueError, IndexError) as e:
+                                        pass
                             
                             if motion_d:
-                                print("Using [" + motion_d.name + "] as motion provider for [" + d.name + "]")
+                                print("Using [" + ", ".join([motion.name for motion in motion_d]) + "] as motion provider for [" + d.name + "]")
                             else:
                                 print("Not using motion inputs for [" + d.name + "]")
 
-                            for i in range(4):
-                                if self.slots[i] == None:
-                                    self.slots[i] = SwitchDevice(self, d, motion_d)
-                                    break
+                            try:
+                                self.add_device(d, motion_d.pop(0), True)
+                            except IndexError:
+                                pass
+                            else:
+                                for motion in motion_d:
+                                    self.add_device(d, motion, False)
                             
                             self.print_slots()
                 
-                for i in range(4):
-                    if self.slots[i] != None and self.slots[i].disconnected == True:
+                for i, slot in enumerate(self.slots):
+                    if slot and slot.disconnected:
                         self.slots[i] = None
                         self.print_slots()
                 
@@ -545,38 +564,33 @@ class UDPServer:
         print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
             .format("Device", "Battery Lv", "Motion Dev", "MAC Addr"))
 
-        for i in range(4):
-            if self.slots[i] == None:
+        for i, slot in enumerate(self.slots):
+            if not slot:
                 print(str(i+1)+" ❎ ")
             else:
                 device = str(i+1)+" "
-                if "Left" in self.slots[i].name:
+                if "Left" in slot.name:
                     device += "🕹️ L"
-                elif "Right" in self.slots[i].name:
+                elif "Right" in slot.name:
                     device += "🕹️ R"
-                elif "Combined" in self.slots[i].name:
+                elif "Combined" in slot.name:
                     device += "🎮 L+R"
                 else:
                     device += "🎮 Pro"
                 
-                battery = ""
-                if self.slots[i].battery_level:
-                    battery += str(self.slots[i].battery_level)
-                    battery += " "
-                    battery += chr(ord('▁')-1 + int(self.slots[i].battery_level/10))
+                if slot.battery_level:
+                    battery = F"{str(slot.battery_level)} {chr(ord('▁') + int(slot.battery_level / 10) - 1)}"
                 else:
-                    battery += "❌"
+                    battery = "❌"
 
-                motion_d = ""
-                if self.slots[i].motion_device:
-                    motion_d += "✔️"
+                if slot.motion_device:
+                    motion_d = "✔️"
                 else:
-                    motion_d += "❌"
+                    motion_d = "❌"
                 
-                mac = self.slots[i].serial
+                mac = slot.serial
 
-                print(("{:<14} "+colored("{:<12}", "green")+" {:<12} {:<12}")
-                    .format(device, battery, motion_d, mac))
+                print(F'{device:<14} {colored(F"{battery:<12}", "green")} {motion_d:<12} {mac:<12}')
 
         print(colored("=======================================================", attrs=["bold"]))
 
@@ -599,8 +613,8 @@ class UDPServer:
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-v", "--verbose", help="show debug messages", action="store_true")
-parser.add_argument("-ip", "--ip", help="set custom port, default is 127.0.0.1")
-parser.add_argument("-p", "--port", help="set custom port, default is 26760")
+parser.add_argument("-ip", "--ip", help="set custom port, default is 127.0.0.1", default="127.0.0.1")
+parser.add_argument("-p", "--port", help="set custom port, default is 26760", type=int, default=26760)
 args = parser.parse_args()
 
 # Check if hid_nintendo module is installed
@@ -621,13 +635,5 @@ if hid_nintendo_loaded == 1:
     print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
     exit()
 
-ip = '127.0.0.1'
-if args.ip:
-    ip = args.ip
-
-port = 26760
-if args.port:
-    port = int(args.port)
-
-server = UDPServer(ip, port)
+server = UDPServer(args.ip, args.port)
 server.start()
