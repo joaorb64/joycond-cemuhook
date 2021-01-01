@@ -57,7 +57,7 @@ class Message(list):
         self[8:12] = bytes(struct.pack('<I', crc))
 
 class SwitchDevice:
-    def __init__(self, server, device, motion_device):
+    def __init__(self, server, device, motion_device, handle_events = True):
         self.server = server
 
         self.device = device
@@ -68,8 +68,6 @@ class SwitchDevice:
         self.name = device.name
         self.serial = motion_device.uniq if motion_device.uniq != "" else "00:00:00:00:00:00"
         self.mac = [int("0x"+part, 16) for part in self.serial.split(":")]
-
-        self.device_capabilities = device.capabilities(absinfo=True)
 
         self.state = {
             "left_analog_x": 0x00,
@@ -117,9 +115,10 @@ class SwitchDevice:
         self.accel_z = 0
 
         # Input reading thread
-        self.event_thread = Thread(target=self.handle_events)
-        self.event_thread.daemon = True
-        self.event_thread.start()
+        if handle_events:
+            self.event_thread = Thread(target=self.handle_events)
+            self.event_thread.daemon = True
+            self.event_thread.start()
 
         # Motion reading thread
         self.motion_event_thread = Thread(target=self.handle_motion_events)
@@ -194,7 +193,6 @@ class SwitchDevice:
                     for ps_key in self.keymap:
                         if event.code == evdev.ecodes.ecodes.get(self.keymap.get(ps_key, None), None):
                             self.state[ps_key] = 0xFF if event.value == 1 else 0x00
-
         except(OSError, RuntimeError) as e:
             print("Device disconnected: " + self.name)
             self.server.report_clean(self)
@@ -482,6 +480,12 @@ class UDPServer:
 
         self._res_data(i, bytes(Message('data', data)))
     
+    def add_device(self, d, motion_d, handle_devices = True):
+        for i, slot in enumerate(self.slots):
+            if not slot:
+                self.slots[i] = SwitchDevice(self, d, motion_d, handle_devices)
+                return i
+
     def handle_devices(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
 
@@ -501,31 +505,39 @@ class UDPServer:
                         if not found:
                             print("Found ["+d.name+"] - mac: "+d.uniq)
 
-                            motion_d = None
+                            motion_d = []
 
                             for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
                                 if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs and should not be assigned to any random evdev device
-                                    motion_d = dd
+                                    motion_d.append(dd)
                                     break
                             
-                            if motion_d == None:
-                                print("Select motion provider for ["+d.name+"]: ")
+                            if not motion_d:
+                                print("Select motion provider(s) for ["+d.name+"]: ")
                                 for i, dd in enumerate(evdev_devices):
                                     print(
                                         ("*" if "Nintendo" in dd.name and "IMU" in dd.name else " ") + 
                                         str(i) + " " + dd.name + " - mac: " + dd.uniq
                                     )
-                                motion_d = evdev_devices[int(input(""))]
+
+                                for i in input("").split():
+                                    try:
+                                        motion_d.append(evdev_devices[int(i)])
+                                    except (ValueError, IndexError) as e:
+                                        pass
                             
                             if motion_d:
-                                print("Using [" + motion_d.name + "] as motion provider for [" + d.name + "]")
+                                print("Using [" + ", ".join([motion.name for motion in motion_d]) + "] as motion provider for [" + d.name + "]")
                             else:
                                 print("Not using motion inputs for [" + d.name + "]")
 
-                            for i, slot in enumerate(self.slots):
-                                if not slot:
-                                    self.slots[i] = SwitchDevice(self, d, motion_d)
-                                    break
+                            try:
+                                self.add_device(d, motion_d.pop(0), True)
+                            except IndexError:
+                                pass
+                            else:
+                                for motion in motion_d:
+                                    self.add_device(d, motion, False)
                             
                             self.print_slots()
                 
