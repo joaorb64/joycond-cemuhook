@@ -510,55 +510,60 @@ class UDPServer:
                 # Sort devices by name for more consistent output
                 evdev_devices = sorted([evdev.InputDevice(path) for path in evdev.list_devices()], key=lambda d: d.name)
 
+                valid_device_names = ["Nintendo Switch Left Joy-Con",
+                                      "Nintendo Switch Right Joy-Con",
+                                      "Nintendo Switch Pro Controller",
+                                      "Nintendo Switch Combined Joy-Cons"]
+
+                # Find new devices
                 for d in evdev_devices:
-                    if d in self.blacklisted:
+                    if d in self.blacklisted or d.name not in valid_device_names:
                         continue
 
-                    if d.name in ["Nintendo Switch Left Joy-Con",
-                                  "Nintendo Switch Right Joy-Con",
-                                  "Nintendo Switch Pro Controller",
-                                  "Nintendo Switch Combined Joy-Cons"]:
-                        found = any(my_device.device == d for my_device in self.slots if my_device != None)
+                    # Skip devices that were already assigned a slot
+                    elif any(d == device.device for device in self.slots if device):
+                        continue
 
-                        if not found:
-                            print("Found ["+d.name+"] - mac: "+d.uniq)
+                    print("Found ["+d.name+"] - mac: "+d.uniq)
 
-                            motion_d = []
+                    motion_d = []
 
-                            for dd in evdev_devices: # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
-                                if dd.uniq == d.uniq and dd != d and dd.uniq != "": # combined Joy-Cons have blank uniqs and should not be assigned to any random evdev device
-                                    motion_d.append(dd)
-                                    break
-                            
-                            if not motion_d:
-                                print("Select motion provider(s) for ["+d.name+"]: ")
-                                for i, dd in enumerate(evdev_devices):
-                                    print(
-                                        ("*" if "Nintendo" in dd.name and "IMU" in dd.name else " ") + 
-                                        str(i) + " " + dd.name + " - mac: " + dd.uniq
-                                    )
+                    # try to automagically identify correct IMU for individual Joy-Cons and Pro Controller
+                    # combined Joy-Cons have blank uniqs and should not be assigned to any random evdev device
+                    try:
+                        motion_d.append(next(dd for dd in evdev_devices if dd.uniq and dd.uniq == d.uniq and dd != d))
 
-                                for i in input("").split():
-                                    try:
-                                        motion_d.append(evdev_devices[int(i)])
-                                    except (ValueError, IndexError) as e:
-                                        pass
-                            
-                            if motion_d:
-                                print("Using [" + ", ".join([motion.name for motion in motion_d]) + "] as motion provider for [" + d.name + "]")
-                            else:
-                                print("Not using motion inputs for [" + d.name + "]")
+                    # auto-detection failed, ask user to choose motion device
+                    except StopIteration:
+                        print("Select motion provider(s) for ["+d.name+"]: ")
+                        for i, dd in enumerate(evdev_devices):
+                            print(
+                                ("*" if "Nintendo" in dd.name and "IMU" in dd.name else " ") + 
+                                str(i) + " " + dd.name + " - mac: " + dd.uniq
+                            )
 
+                        for i in input("").split():
                             try:
-                                self.add_device(d, motion_d.pop(0), True)
-                            except IndexError:
+                                motion_d.append(evdev_devices[int(i)])
+                            except (ValueError, IndexError) as e:
                                 pass
-                            else:
-                                for motion in motion_d:
-                                    self.add_device(d, motion, False)
-                            
-                            self.print_slots()
+
+                    if not motion_d:
+                        print("Not using motion inputs for [" + d.name + "]")
+                        continue
+
+                    print("Using [" + ", ".join([motion.name for motion in motion_d]) + "] as motion provider for [" + d.name + "]")
+
+                    # For the first motion device, start both input thread and motion thread
+                    self.add_device(d, motion_d.pop(0), True)
+
+                    # For additional motion devices, start only motion thread to avoid 'device busy' errors
+                    for motion in motion_d:
+                        self.add_device(d, motion, False)
+
+                    self.print_slots()
                 
+                # Detect disconnected devices
                 for i, slot in enumerate(self.slots):
                     if slot and slot.disconnected:
                         self.slots[i] = None
