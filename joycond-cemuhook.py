@@ -278,6 +278,7 @@ class UDPServer:
         self.counter = 0
         self.clients = dict()
         self.slots = [None] * MAX_PADS
+        self.blacklisted = []
         self.locks = [asyncio.Lock(), asyncio.Lock(), asyncio.Lock(), asyncio.Lock()]
         self.lock = asyncio.Lock()
 
@@ -488,10 +489,16 @@ class UDPServer:
         self._res_data(i, bytes(Message('data', data)))
     
     def add_device(self, d, motion_d, handle_devices = True):
+        # Find an empty slot for the new device
         for i, slot in enumerate(self.slots):
             if not slot:
                 self.slots[i] = SwitchDevice(self, d, motion_d, handle_devices)
                 return i
+
+        # All four slots have been allocated
+        print("Unable to use device [" + d.name + "]: Slots full")
+        self.blacklisted.append(d)
+        return MAX_PADS
 
     def handle_devices(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
@@ -500,9 +507,13 @@ class UDPServer:
         
         while True:
             try:
-                evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+                # Sort devices by name for more consistent output
+                evdev_devices = sorted([evdev.InputDevice(path) for path in evdev.list_devices()], key=lambda d: d.name)
 
                 for d in evdev_devices:
+                    if d in self.blacklisted:
+                        continue
+
                     if d.name in ["Nintendo Switch Left Joy-Con",
                                   "Nintendo Switch Right Joy-Con",
                                   "Nintendo Switch Pro Controller",
@@ -551,6 +562,8 @@ class UDPServer:
                 for i, slot in enumerate(self.slots):
                     if slot and slot.disconnected:
                         self.slots[i] = None
+                        if self.blacklisted:
+                            self.blacklisted.pop()
                         self.print_slots()
                 
                 time.sleep(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
