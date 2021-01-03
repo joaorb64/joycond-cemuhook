@@ -11,6 +11,7 @@ import json
 import argparse
 import subprocess
 from termcolor import colored
+from collections import OrderedDict
 
 MAX_PADS = 4
 
@@ -536,15 +537,20 @@ class UDPServer:
                     # auto-detection failed, ask user to choose motion device
                     except StopIteration:
                         print("Select motion provider(s) for ["+d.name+"]: ")
-                        for i, dd in enumerate(evdev_devices):
-                            print(
-                                ("*" if "Nintendo" in dd.name and "IMU" in dd.name else " ") + 
-                                str(i) + " " + dd.name + " - mac: " + dd.uniq
-                            )
 
-                        for i in input("").split():
+                        # Allow only Nintendo Switch motion devices
+                        # Filter out devices that are automatically assigned or that were already assigned a slot
+                        allowed_devices = [dd for dd in evdev_devices if ("Nintendo" in dd.name and "IMU" in dd.name
+                                                                          and not any(dd.uniq == device.uniq for device in evdev_devices if device != dd)
+                                                                          and not any(dd == device.motion_device for device in self.slots if device))]
+
+                        for i, dd in enumerate(allowed_devices):
+                            print(F"{str(i+1)} {dd.name} - mac: {dd.uniq}")
+
+                        # Remove duplicates from user's choice to avoid assigning the same device twice
+                        for i in list(OrderedDict.fromkeys(input("").split())):
                             try:
-                                motion_d.append(evdev_devices[int(i)])
+                                motion_d.append(allowed_devices[int(i)-1])
                             except (ValueError, IndexError) as e:
                                 pass
 
