@@ -12,6 +12,7 @@ import argparse
 import subprocess
 from termcolor import colored
 from collections import OrderedDict
+import os
 
 MAX_PADS = 4
 
@@ -57,6 +58,27 @@ class Message(list):
         crc = crc32(bytes(self)) & 0xffffffff
         self[8:12] = bytes(struct.pack('<I', crc))
 
+def get_device_led_status(device):
+    ledPaths = [0] * 5
+
+    ledsPath = "/sys/class/"+device.path.split("dev/")[1]+"/device/device/leds/"
+    leds = os.listdir(ledsPath)
+
+    for led in leds:
+        if "player1" in led: ledPaths[0] = ledsPath+led
+        if "player2" in led: ledPaths[1] = ledsPath+led
+        if "player3" in led: ledPaths[2] = ledsPath+led
+        if "player4" in led: ledPaths[3] = ledsPath+led
+        if "home" in led: ledPaths[4] = ledsPath+led
+
+    led_status = [0, 0, 0, 0, 0] # p1, p2, p3, p4, home
+
+    for i, ledPath in enumerate(ledPaths):
+        with open(ledPath+"/brightness", "r") as f:
+            led_status[i] = int(f.readline())
+    
+    return led_status
+
 class SwitchDevice:
     def __init__(self, server, device, motion_device, handle_events = True):
         self.server = server
@@ -69,6 +91,8 @@ class SwitchDevice:
         self.name = device.name
         self.serial = motion_device.uniq if motion_device.uniq != "" else "00:00:00:00:00:00"
         self.mac = [int("0x"+part, 16) for part in self.serial.split(":")]
+
+        self.led_status = get_device_led_status(device)
 
         self.state = {
             "left_analog_x": 0x00,
@@ -585,7 +609,7 @@ class UDPServer:
     def print_slots(self):
         print(colored("======================== Slots ========================", attrs=["bold"]))
         
-        print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
+        print (colored("{:<14}   {:<12} {:<12} {:<12}", attrs=["bold"])
             .format("Device", "Battery Lv", "Motion Dev", "MAC Addr"))
 
         for i, slot in enumerate(self.slots):
@@ -602,6 +626,13 @@ class UDPServer:
                 else:
                     device += "🎮 Pro"
                 
+                leds = ""
+                for led in slot.led_status[0:4]:
+                    if led == 1:
+                        leds += '\033[92m'+"■ "+'\033[0m'
+                    else:
+                        leds += '\033[0m'+"■ "+'\033[0m'
+                
                 if slot.battery_level:
                     battery = F"{str(slot.battery_level)} {chr(ord('▁') + int(slot.battery_level / 10) - 1)}"
                 else:
@@ -614,7 +645,7 @@ class UDPServer:
                 
                 mac = slot.serial
 
-                print(F'{device:<14} {colored(F"{battery:<12}", "green")} {motion_d:<12} {mac:<12}')
+                print(F'{device:<8} {leds} {colored(F"{battery:<12}", "green")} {motion_d:<12} {mac:<12}')
 
         print(colored("=======================================================", attrs=["bold"]))
 
