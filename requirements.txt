@@ -1,4 +1,5 @@
 evdev
+pyudev
 asyncio
 dbus-python
 argparse

@@ -1,5 +1,6 @@
 import sys
 import evdev
+import pyudev
 from threading import Thread
 import socket
 import struct
@@ -29,6 +30,25 @@ def abs_to_button(value):
     else:
         value = 0
     return value
+
+def get_led_status(device):
+    leds = {}
+    context = pyudev.Context()
+    udev_device = context.list_devices(subsystem='input').match_attribute('uniq', device.uniq.encode()).match_attribute('name', device.name.encode())
+
+    # should match only one device
+    udev_device = list(udev_device)[0]
+
+    # combined device has no parent and would match random leds in the system
+    if udev_device.parent is None:
+        return leds
+
+    udev_leds = context.list_devices(subsystem='leds').match_parent(udev_device.parent)
+    for led in udev_leds:
+        name = led.sys_name.split(':')[-1]
+        status = led.attributes.get('brightness').decode()
+        leds[name] = status
+    return leds
 
 class Message(list):
     Types = dict(version=bytes([0x00, 0x00, 0x10, 0x00]),
