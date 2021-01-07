@@ -90,6 +90,11 @@ class SwitchDevice:
         self.serial = motion_device.uniq if motion_device.uniq != "" else "00:00:00:00:00:00"
         self.mac = [int("0x"+part, 16) for part in self.serial.split(":")]
 
+        self.led_status = get_led_status(self.device)
+
+        if self.led_status == None or len(self.led_status) == 0:
+            self.led_status = get_led_status(self.motion_device)
+
         self.state = {
             "left_analog_x": 0x00,
             "left_analog_y": 0x00,
@@ -605,8 +610,8 @@ class UDPServer:
     def print_slots(self):
         print(colored("======================== Slots ========================", attrs=["bold"]))
         
-        print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
-            .format("Device", "Battery Lv", "Motion Dev", "MAC Addr"))
+        print (colored("{:<14} {:<12} {:<12} {:<12} {:<12}", attrs=["bold"])
+            .format("Device", "LED status", "Battery Lv", "Motion Dev", "MAC Addr"))
 
         for i, slot in enumerate(self.slots):
             if not slot:
@@ -621,6 +626,19 @@ class UDPServer:
                     device += "🎮 L+R"
                 else:
                     device += "🎮 Pro"
+
+                leds = ""
+
+                if slot.led_status:
+                    for l in range(1, 5):
+                        led = slot.led_status.get("player"+str(l), 0)
+
+                        if led == '1':
+                            leds += "■ "
+                        else:
+                            leds += "□ "
+                else:
+                    leds = "?"
                 
                 if slot.battery_level:
                     battery = F"{str(slot.battery_level)} {chr(ord('▁') + int(slot.battery_level / 10) - 1)}"
@@ -634,7 +652,7 @@ class UDPServer:
                 
                 mac = slot.serial
 
-                print(F'{device:<14} {colored(F"{battery:<12}", "green")} {motion_d:<12} {mac:<12}')
+                print(F'{device:<15} {colored(F"{leds:<12}", "green")} {colored(F"{battery:<12}", "green")} {motion_d:<13} {mac:<12}')
 
         print(colored("=======================================================", attrs=["bold"]))
 
