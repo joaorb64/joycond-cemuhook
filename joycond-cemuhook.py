@@ -622,6 +622,10 @@ class UDPServer:
                         except StopIteration:
                             combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
 
+                            # Devices are not yet 'paired'
+                            if not combined_devices:
+                                continue
+
                             # Sort combined devices by creation time.
                             # This is the best guess we have to match combined device to it's individual Joy-Cons
                             if len(combined_devices) > 1:
