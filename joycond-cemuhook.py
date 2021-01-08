@@ -747,16 +747,16 @@ class UDPServer:
         self.device_thread.start()
 
     def stop(self):
+        for slot in self.slots:
+            if slot:
+                slot.terminate()
+
         self.stop_event.set()
 
         # Send message to sock to trigger sock.recvfrom
         sock_stop = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         sock_stop.sendto(b'', self.sock.getsockname())
         sock_stop.close()
-
-        for slot in self.slots:
-            if slot:
-                slot.terminate()
 
         self.thread.join()
         self.device_thread.join()
