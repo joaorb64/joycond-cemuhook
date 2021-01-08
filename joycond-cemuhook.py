@@ -1,12 +1,13 @@
 import sys
 import evdev
 import pyudev
-from threading import Thread
+from threading import Thread, Event
 import socket
 import struct
 from binascii import crc32
 import time
 import asyncio
+import signal
 import dbus
 import json
 import argparse
@@ -95,7 +96,7 @@ class Message(list):
         self[8:12] = bytes(struct.pack('<I', crc))
 
 class SwitchDevice:
-    def __init__(self, server, device, motion_device, handle_events = True):
+    def __init__(self, server, device, motion_device, motion_only=False):
         self.server = server
 
         self.device = device
@@ -159,75 +160,97 @@ class SwitchDevice:
         self.accel_y = 0
         self.accel_z = 0
 
-        # Input reading thread
-        if handle_events:
-            self.event_thread = Thread(target=self.handle_events)
-            self.event_thread.daemon = True
-            self.event_thread.start()
-        else:
-            self.event_thread = None
+        self.motion_only = motion_only
 
-        # Motion reading thread
-        self.motion_event_thread = Thread(target=self.handle_motion_events)
-        self.motion_event_thread.daemon = True
-        self.motion_event_thread.start()
-
-        # Battery level reading thread
         self.battery_level = None
         self.battery_state = None
         self.dbus_interface = None
         self.dbus_properties_interface = None
         self.get_battery_dbus_interface()
 
+        self.thread = Thread(target=self._worker)
+        self.thread.daemon = True
+        self.thread.start()
+
+    def _worker(self):
+        self._loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self._loop)
+
+        # Motion reading task
+        tasks = {asyncio.ensure_future(self._handle_motion_events())}
+
+        # Input reading task
+        if not self.motion_only:
+            tasks.add(asyncio.ensure_future(self._handle_events()))
+
+        # Battery level reading task
         if self.dbus_interface and self.dbus_properties_interface:
-            self.battery_thread = Thread(target=self.get_battery_level)
-            self.battery_thread.daemon = True
-            self.battery_thread.start()
-    
-    def disconnect(self):
+            tasks.add(asyncio.ensure_future(self._get_battery_level()))
+
+        # Listen to termination request task
+        tasks.add(asyncio.ensure_future(self._wait_for_termination()))
+
+        # Start all tasks, stop at the first completed task
+        done, pending = asyncio.get_event_loop().run_until_complete(asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED))
+
+        # Cancel all other tasks
+        for task in pending:
+            task.cancel()
+
+        # Wait for all tasks to finish
+        self._loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(self._loop)))
+        asyncio.get_event_loop().close()
+
+        self._disconnect()
+
+    def _disconnect(self):
+        print(F"Device disconnected: {self.name}")
         self.server.report_clean(self)
         self.disconnected = True
 
-    def handle_motion_events(self):
-        print_verbose("Motion events thread started")
-        if self.motion_device:
-            try:
-                asyncio.set_event_loop(asyncio.new_event_loop())
-                for event in self.motion_device.read_loop():
-                    if event.type == evdev.ecodes.SYN_REPORT:
-                        self.server.report(self, True)
-                        self.motion_x = 0
-                        self.motion_y = 0
-                        self.motion_z = 0
-                    elif event.type == evdev.ecodes.EV_ABS:
-                        # Get info about the axis we're reading the event from
-                        axis = self.motion_device.absinfo(event.code)
-
-                        if event.code == evdev.ecodes.ABS_RX:
-                            self.motion_x += event.value / axis.resolution
-                        if event.code == evdev.ecodes.ABS_RY:
-                            self.motion_y += event.value / axis.resolution
-                        if event.code == evdev.ecodes.ABS_RZ:
-                            self.motion_z += event.value / axis.resolution
-                        if event.code == evdev.ecodes.ABS_X:
-                            self.accel_x = event.value / axis.resolution
-                        if event.code == evdev.ecodes.ABS_Y:
-                            self.accel_y = event.value / axis.resolution
-                        if event.code == evdev.ecodes.ABS_Z:
-                            self.accel_z = event.value / axis.resolution
-            except(OSError, RuntimeError) as e:
-                print("Device motion disconnected: " + self.name)
-                self.disconnect()
-                asyncio.get_event_loop().close()
-    
-    def handle_events(self):
-        print_verbose("Input events thread started")
+    async def _wait_for_termination(self):
+        self._terminate_event = asyncio.Event()
         try:
-            asyncio.set_event_loop(asyncio.new_event_loop())
-            for event in self.device.read_loop():
-                if self.disconnected:
-                    raise RuntimeError
+            await self._terminate_event.wait()
+        except asyncio.CancelledError:
+            return
 
+    def terminate(self):
+        self._terminate_event.set()
+        self.thread.join()
+
+    async def _handle_motion_events(self):
+        print_verbose(F"Motion events task started {self.motion_device}")
+        try:
+            async for event in self.motion_device.async_read_loop():
+                if event.type == evdev.ecodes.SYN_REPORT:
+                    self.server.report(self, True)
+                    self.motion_x = 0
+                    self.motion_y = 0
+                    self.motion_z = 0
+                elif event.type == evdev.ecodes.EV_ABS:
+                    # Get info about the axis we're reading the event from
+                    axis = self.motion_device.absinfo(event.code)
+
+                    if event.code == evdev.ecodes.ABS_RX:
+                        self.motion_x += event.value / axis.resolution
+                    if event.code == evdev.ecodes.ABS_RY:
+                        self.motion_y += event.value / axis.resolution
+                    if event.code == evdev.ecodes.ABS_RZ:
+                        self.motion_z += event.value / axis.resolution
+                    if event.code == evdev.ecodes.ABS_X:
+                        self.accel_x = event.value / axis.resolution
+                    if event.code == evdev.ecodes.ABS_Y:
+                        self.accel_y = event.value / axis.resolution
+                    if event.code == evdev.ecodes.ABS_Z:
+                        self.accel_z = event.value / axis.resolution
+        except (asyncio.CancelledError, OSError) as e:
+            print_verbose("Motion events task ended")
+
+    async def _handle_events(self):
+        print_verbose("Input events task started")
+        try:
+            async for event in self.device.async_read_loop():
                 if event.type == evdev.ecodes.SYN_REPORT:
                     self.server.report(self)
                 if event.type == evdev.ecodes.EV_ABS:
@@ -247,9 +270,8 @@ class SwitchDevice:
                     for ps_key in self.keymap:
                         if event.code == evdev.ecodes.ecodes.get(self.keymap.get(ps_key, None), None):
                             self.state[ps_key] = 0xFF if event.value == 1 else 0x00
-        except(OSError, RuntimeError) as e:
-            print("Device disconnected: " + self.name)
-            asyncio.get_event_loop().close()
+        except (asyncio.CancelledError, OSError) as e:
+            print_verbose("Input events task ended")
     
     def get_battery_dbus_interface(self):
         bus = dbus.SystemBus()
@@ -275,10 +297,10 @@ class SwitchDevice:
                 return True
         return False
     
-    def get_battery_level(self):
+    async def _get_battery_level(self):
+        print_verbose("Battery level reading thread started")
         try:
-            print_verbose("Battery level reading thread started")
-            while(self.dbus_interface != None):
+            while self.dbus_interface != None:
                 self.dbus_interface.Refresh()
                 properties = self.dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
                 if properties["Percentage"] != self.battery_level:
@@ -286,9 +308,9 @@ class SwitchDevice:
                     self.battery_level = properties["Percentage"]
                     self.battery_state = properties["State"]
                     self.server.print_slots()
-                time.sleep(30)
-        except Exception as e:
-            print(e)
+                await asyncio.sleep(30)
+        except (asyncio.CancelledError, Exception) as e:
+            print_verbose("Battery level reading task ended")
             self.battery_level = None
             self.battery_state = None
     
@@ -324,8 +346,7 @@ class UDPServer:
         self.clients = dict()
         self.slots = [None] * MAX_PADS
         self.blacklisted = []
-        self.locks = [asyncio.Lock(), asyncio.Lock(), asyncio.Lock(), asyncio.Lock()]
-        self.lock = asyncio.Lock()
+        self.stop_event = Event()
 
     def _res_ports(self, index):
         data = [
@@ -392,6 +413,10 @@ class UDPServer:
     
     def _handle_request(self, request):
         message, address = request
+
+        # Ignore empty messages (sent by sock_stop)
+        if not message:
+            return
 
         # client_id = message[12:16]
         msg_type = message[16:20]
@@ -533,11 +558,11 @@ class UDPServer:
 
         self._res_data(i, bytes(Message('data', data)))
     
-    def add_device(self, device, motion_device, handle_devices=True):
+    def add_device(self, device, motion_device, motion_only=False):
         # Find an empty slot for the new device
         for i, slot in enumerate(self.slots):
             if not slot:
-                self.slots[i] = SwitchDevice(self, device, motion_device, handle_devices)
+                self.slots[i] = SwitchDevice(self, device, motion_device, motion_only)
                 return i
 
         # All four slots have been allocated
@@ -545,23 +570,23 @@ class UDPServer:
         self.blacklisted.append(d)
         return MAX_PADS
 
-    def add_devices(self, device, motion_devices, handle_devices=True):
+    def add_devices(self, device, motion_devices, motion_only=False):
         if not motion_devices:
             return
 
         # For the first motion device, start both input thread and motion thread
-        self.add_device(device, motion_devices.pop(0), handle_devices)
+        self.add_device(device, motion_devices.pop(0), motion_only)
 
         # For additional motion devices, start only motion thread to avoid 'device busy' errors
         for motion_device in motion_devices:
-            self.add_device(device, motion_device, False)
+            self.add_device(device, motion_device, True)
 
     def handle_devices(self):
         asyncio.set_event_loop(asyncio.new_event_loop())
 
         print("Looking for Nintendo Switch controllers...")
         
-        while True:
+        while not self.stop_event.is_set():
             try:
                 evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
 
@@ -597,7 +622,7 @@ class UDPServer:
                     # Could happen when one Joy-Con in a combined pair is disconnected and then reconnected
                     previously_assigned = next((slot for slot in self.slots if slot and player == slot.player_id), None)
                     if previously_assigned:
-                        self.add_devices(previously_assigned.device, devices, previously_assigned.event_thread is None)
+                        self.add_devices(previously_assigned.device, devices, not previously_assigned.motion_only)
                         continue
 
                     # Lone device
@@ -658,7 +683,7 @@ class UDPServer:
                 if active_devices != taken_slots():
                     self.print_slots()
                 
-                time.sleep(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
+                self.stop_event.wait(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
             except Exception as e:
                 print(e)
                     
@@ -708,9 +733,9 @@ class UDPServer:
         print(colored("=======================================================", attrs=["bold"]))
 
     def _worker(self):
-        asyncio.set_event_loop(asyncio.new_event_loop())
-        while True:
+        while not self.stop_event.is_set():
             self._handle_request(self.sock.recvfrom(1024))
+        self.sock.close()
 
     def start(self):
         self.thread = Thread(target=self._worker)
@@ -721,8 +746,20 @@ class UDPServer:
         self.device_thread.daemon = True
         self.device_thread.start()
 
-        self.device_thread.join()
+    def stop(self):
+        self.stop_event.set()
 
+        # Send message to sock to trigger sock.recvfrom
+        sock_stop = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock_stop.sendto(b'', self.sock.getsockname())
+        sock_stop.close()
+
+        for slot in self.slots:
+            if slot:
+                slot.terminate()
+
+        self.thread.join()
+        self.device_thread.join()
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-v", "--verbose", help="show debug messages", action="store_true")
@@ -755,3 +792,10 @@ if hid_nintendo_loaded == 1:
 
 server = UDPServer(args.ip, args.port)
 server.start()
+
+def signal_handler(signal, frame):
+    print("Stopping server...")
+    server.stop()
+
+signal.signal(signal.SIGINT, signal_handler)
+signal.pause()
