@@ -690,9 +690,9 @@ class UDPServer:
     
     def print_slots(self):
         print(colored("======================== Slots ========================", attrs=["bold"]))
-        
-        print (colored("{:<14} {:<12} {:<12} {:<12} {:<12}", attrs=["bold"])
-            .format("Device", "LED status", "Battery Lv", "Motion Dev", "MAC Addr"))
+
+        print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
+            .format("Device", "LED status", "Battery Lv", "MAC Addr"))
 
         for i, slot in enumerate(self.slots):
             if not slot:
@@ -715,20 +715,16 @@ class UDPServer:
 
                 if not leds:
                     leds = "?"
-                
+
                 if slot.battery_level:
-                    battery = F"{str(slot.battery_level)} {chr(ord('▁') + int(slot.battery_level / 10) - 1)}"
+                    battery = F"{str(slot.battery_level)} {chr(ord('▁') + int(slot.battery_level * 7 / 100))}"
                 else:
                     battery = "❌"
-
-                if slot.motion_device:
-                    motion_d = "✔️"
-                else:
-                    motion_d = "❌"
                 
                 mac = slot.serial
 
-                print(F'{device:<15} {colored(F"{leds:<12}", "green")} {colored(F"{battery:<12}", "green")} {motion_d:<13} {mac:<12}')
+                # print device after calculating alignment because the gamepad symbols cause alignment errors
+                print(F'{"":<14} {colored(F"{leds:<12}", "green")} {colored(F"{battery:<12}", "green")} {mac:<12}\r{device}')
 
         print(colored("=======================================================", attrs=["bold"]))
 
