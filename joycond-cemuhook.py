@@ -566,8 +566,8 @@ class UDPServer:
                 return i
 
         # All four slots have been allocated
-        print("Unable to use device [" + d.name + "]: Slots full")
-        self.blacklisted.append(d)
+        print("Unable to use device [" + device.name + "]: Slots full")
+        self.blacklisted.append(device)
         return MAX_PADS
 
     def add_devices(self, device, motion_devices, motion_only=False):
@@ -597,6 +597,9 @@ class UDPServer:
                                       "Nintendo Switch Right Joy-Con",
                                       "Nintendo Switch Pro Controller",
                                       "Nintendo Switch Combined Joy-Cons"]
+
+                # Added for backwards compatibility with older versions of joycond
+                combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
 
                 taken_slots = lambda: sum(d is not None for d in self.slots)
 
@@ -645,8 +648,6 @@ class UDPServer:
 
                         # Added for compatibility with older versions of joycond
                         except StopIteration:
-                            combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
-
                             # Devices are not yet 'paired'
                             if not combined_devices:
                                 continue
@@ -655,7 +656,7 @@ class UDPServer:
                             # This is the best guess we have to match combined device to it's individual Joy-Cons
                             if len(combined_devices) > 1:
                                 context = pyudev.Context()
-                                combined_devices.sort(key=lambda d: next(iter(context.list_devices(sys_name=basename(d.path)))).time_since_initialized)
+                                combined_devices.sort(key=lambda d: next(iter(context.list_devices(sys_name=basename(d.path)))).time_since_initialized, reverse=True)
 
                             device = combined_devices.pop(0)
 
