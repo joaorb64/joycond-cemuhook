@@ -16,8 +16,6 @@ from termcolor import colored
 from collections import OrderedDict
 from os.path import basename
 
-MAX_PADS = 4
-
 def print_verbose(str):
     global args
     if args.verbose:
@@ -338,14 +336,15 @@ class SwitchDevice:
         return report
 
 class UDPServer:
+    MAX_PADS = 4
+
     def __init__(self, host='', port=26760):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((host, port))
         print_verbose("Started UDP server with ip "+str(host)+", port "+str(port))
         self.counter = 0
         self.clients = dict()
-        self.slots = [None] * MAX_PADS
-        self.blacklisted = []
+        self.slots = [None] * UDPServer.MAX_PADS
         self.stop_event = Event()
 
     def _res_ports(self, index):
@@ -566,131 +565,20 @@ class UDPServer:
                 return i
 
         # All four slots have been allocated
-        print("Unable to use device [" + device.name + "]: Slots full")
-        self.blacklisted.append(device)
-        return MAX_PADS
+        return UDPServer.MAX_PADS
 
     def add_devices(self, device, motion_devices, motion_only=False):
-        if not motion_devices:
-            return
+        i = -1
 
-        # For the first motion device, start both input thread and motion thread
-        self.add_device(device, motion_devices.pop(0), motion_only)
+        # Any motion device except the first one should have only motion reading task to avoid 'device busy' errors
+        for i, motion_device in enumerate(motion_devices):
+            if self.add_device(device, motion_device, motion_only if i == 0 else True) == UDPServer.MAX_PADS:
+                return i
 
-        # For additional motion devices, start only motion thread to avoid 'device busy' errors
-        for motion_device in motion_devices:
-            self.add_device(device, motion_device, True)
+        return i + 1
 
-    def handle_devices(self):
-        asyncio.set_event_loop(asyncio.new_event_loop())
-
-        print("Looking for Nintendo Switch controllers...")
-        
-        while not self.stop_event.is_set():
-            try:
-                evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
-
-                # Filter devices that were already assigned or couldn't be assigned
-                evdev_devices = [d for d in evdev_devices if d not in self.blacklisted and not any(d in [dd.device, dd.motion_device] for dd in self.slots if dd)]
-
-                valid_device_names = ["Nintendo Switch Left Joy-Con",
-                                      "Nintendo Switch Right Joy-Con",
-                                      "Nintendo Switch Pro Controller",
-                                      "Nintendo Switch Combined Joy-Cons"]
-
-                # Added for backwards compatibility with older versions of joycond
-                combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
-
-                taken_slots = lambda: sum(d is not None for d in self.slots)
-
-                # players 1-4, 0 for invalid devices
-                players = {i:[] for i in range(MAX_PADS+1)}
-                for d in evdev_devices:
-                    players[get_player_id(d)].append(d)
-
-                active_devices = taken_slots()
-
-                del players[0]
-                for player, devices in sorted(players.items()):
-                    if not devices:
-                        continue
-
-                    # This might happen if there are more than 4 players
-                    # This can lead to buggy behaviour and should be blacklisted for now
-                    elif len(devices) > 3:
-                        print(F"More than four players detected. Ignoring player {player}.")
-                        self.blacklisted.extend(devices)
-                        continue
-
-                    # Could happen when one Joy-Con in a combined pair is disconnected and then reconnected
-                    previously_assigned = next((slot for slot in self.slots if slot and player == slot.player_id), None)
-                    if previously_assigned:
-                        self.add_devices(previously_assigned.device, devices, not previously_assigned.motion_only)
-                        continue
-
-                    # Lone device
-                    if all(d.uniq == devices[0].uniq for d in devices):
-                        devices.sort(key=lambda d: d.name in valid_device_names, reverse=True)
-                        try:
-                            device = next(d for d in devices if d.name in valid_device_names)
-
-                        # Device is not yet 'paired'
-                        except StopIteration:
-                            continue
-                        devices.remove(device)
-                        motion_devices = devices
-
-                    # Paired Joy-Cons
-                    else:
-                        try:
-                            device = next(d for d in devices if "Combined" in d.name)
-                            devices.remove(device)
-
-                        # Added for compatibility with older versions of joycond
-                        except StopIteration:
-                            # Devices are not yet 'paired'
-                            if not combined_devices:
-                                continue
-
-                            # Sort combined devices by creation time.
-                            # This is the best guess we have to match combined device to it's individual Joy-Cons
-                            if len(combined_devices) > 1:
-                                context = pyudev.Context()
-                                combined_devices.sort(key=lambda d: next(iter(context.list_devices(sys_name=basename(d.path)))).time_since_initialized, reverse=True)
-
-                            device = combined_devices.pop(0)
-
-                        # Right Joy-Con is mapped first
-                        motion_devices = sorted(devices, key=lambda d: "Right" in d.name, reverse=True)
-
-                        if args.right_only or args.left_only:
-                            removed = "Right" if args.left_only else "Left"
-                            removed_device = next((d for d in motion_devices if removed in d.name), None)
-                            if removed_device:
-                                motion_devices.remove(removed_device)
-                                self.blacklisted.append(removed_device)
-
-                    self.add_devices(device, motion_devices)
-
-                if active_devices != taken_slots():
-                    self.print_slots()
-                    active_devices = taken_slots()
-
-                # Detect disconnected devices
-                for i, slot in enumerate(self.slots):
-                    if slot and slot.disconnected:
-                        self.slots[i] = None
-
-                if active_devices != taken_slots():
-                    self.print_slots()
-                
-                self.stop_event.wait(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
-            except Exception as e:
-                print(e)
-                    
-    
     def print_slots(self):
-        print(colored("======================== Slots ========================", attrs=["bold"]))
+        print(colored(F" {self.sock.getsockname()} ".center(55, "="), attrs=["bold"]))
 
         print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
             .format("Device", "LED status", "Battery Lv", "MAC Addr"))
@@ -727,7 +615,10 @@ class UDPServer:
                 # print device after calculating alignment because the gamepad symbols cause alignment errors
                 print(F'{"":<14} {colored(F"{leds:<12}", "green")} {colored(F"{battery:<12}", "green")} {mac:<12}\r{device}')
 
-        print(colored("=======================================================", attrs=["bold"]))
+        print(colored("".center(55, "="), attrs=["bold"]))
+
+    def connected_devices(self):
+        return sum(d is not None for d in self.slots)
 
     def _worker(self):
         while not self.stop_event.is_set():
@@ -738,10 +629,6 @@ class UDPServer:
         self.thread = Thread(target=self._worker)
         self.thread.daemon = True
         self.thread.start()
-
-        self.device_thread = Thread(target=self.handle_devices)
-        self.device_thread.daemon = True
-        self.device_thread.start()
 
     def stop(self):
         for slot in self.slots:
@@ -756,7 +643,157 @@ class UDPServer:
         sock_stop.close()
 
         self.thread.join()
-        self.device_thread.join()
+
+
+def handle_devices(stop_event):
+    def add_server(ip, port):
+        try:
+            servers.append(UDPServer(ip, port))
+        except (OSError, PermissionError) as e:
+            return False
+        else:
+            servers[-1].start()
+            return True
+
+    def add_devices(device, motion_devices, motion_only=False):
+        while motion_devices:
+            for server in servers:
+                added = server.add_devices(device, motion_devices, motion_only)
+                motion_devices = motion_devices[added:]
+
+                # All devices added
+                if not motion_devices:
+                    break
+
+                # Some devices were added, the rest must be added with motion_only set
+                elif added:
+                    motion_only = True
+
+            # All servers are full
+            if motion_devices:
+                offset = 0
+                while not add_server(args.ip, args.port + offset):
+                    offset += 1
+
+    def print_slots():
+        for server in servers:
+            server.print_slots()
+
+        print()
+
+    blacklisted = []
+    servers = []
+
+    asyncio.set_event_loop(asyncio.new_event_loop())
+
+    print("Looking for Nintendo Switch controllers...")
+
+    while not stop_event.is_set():
+        slots = sum((server.slots for server in servers), [])
+
+        evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
+
+        # Filter devices that were already assigned or couldn't be assigned
+        evdev_devices = [d for d in evdev_devices if d not in blacklisted and not any(d in [dd.device, dd.motion_device] for dd in slots if dd)]
+
+        valid_device_names = ["Nintendo Switch Left Joy-Con",
+                              "Nintendo Switch Right Joy-Con",
+                              "Nintendo Switch Pro Controller",
+                              "Nintendo Switch Combined Joy-Cons"]
+
+        # Added for backwards compatibility with older versions of joycond
+        combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
+
+        taken_slots = lambda: sum(server.connected_devices() for server in servers)
+
+        # players 1-4, 0 for invalid devices
+        players = {i:[] for i in range(UDPServer.MAX_PADS+1)}
+        for d in evdev_devices:
+            players[get_player_id(d)].append(d)
+
+        active_devices = taken_slots()
+
+        del players[0]
+        for player, devices in sorted(players.items()):
+            if not devices:
+                continue
+
+            # This might happen if there are more than 4 players
+            # This can lead to buggy behaviour and should be blacklisted for now
+            elif len(devices) > 3:
+                print(F"More than four players detected. Ignoring player {player}.")
+                blacklisted.extend(devices)
+                continue
+
+            # Could happen when one Joy-Con in a combined pair is disconnected and then reconnected
+            previously_assigned = next((slot for slot in slots if slot and player == slot.player_id and "Combined" in slot.name), None)
+            if previously_assigned:
+                add_devices(previously_assigned.device, devices, not previously_assigned.motion_only)
+                continue
+
+            # Lone device
+            if all(d.uniq == devices[0].uniq for d in devices):
+                devices.sort(key=lambda d: d.name in valid_device_names, reverse=True)
+                try:
+                    device = next(d for d in devices if d.name in valid_device_names)
+
+                # Device is not yet 'paired'
+                except StopIteration:
+                    continue
+
+                devices.remove(device)
+                motion_devices = devices
+
+            # Paired Joy-Cons
+            else:
+                try:
+                    device = next(d for d in devices if "Combined" in d.name)
+                    devices.remove(device)
+
+                # Added for compatibility with older versions of joycond
+                except StopIteration:
+                    # Devices are not yet 'paired'
+                    if not combined_devices:
+                        continue
+
+                    # Sort combined devices by creation time.
+                    # This is the best guess we have to match combined device to it's individual Joy-Cons
+                    if len(combined_devices) > 1:
+                        context = pyudev.Context()
+                        combined_devices.sort(key=lambda d: next(iter(context.list_devices(sys_name=basename(d.path)))).time_since_initialized, reverse=True)
+
+                    device = combined_devices.pop(0)
+
+                # Right Joy-Con is mapped first
+                motion_devices = sorted(devices, key=lambda d: "Right" in d.name, reverse=True)
+
+                if args.right_only or args.left_only:
+                    removed = "Right" if args.left_only else "Left"
+                    removed_device = next((d for d in motion_devices if removed in d.name), None)
+                    if removed_device:
+                        motion_devices.remove(removed_device)
+                        blacklisted.append(removed_device)
+
+            add_devices(device, motion_devices)
+
+        if active_devices != taken_slots():
+            print_slots()
+            active_devices = taken_slots()
+
+        # Detect disconnected devices
+        for server in servers:
+            for i, slot in enumerate(server.slots):
+                if slot and slot.disconnected:
+                    server.slots[i] = None
+
+        if active_devices != taken_slots():
+            print_slots()
+
+        stop_event.wait(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
+
+    for server in servers:
+        server.stop()
+
 
 parser = argparse.ArgumentParser()
 parser.add_argument("-v", "--verbose", help="show debug messages", action="store_true")
@@ -769,30 +806,37 @@ select_motion.add_argument("-r", "--right-only", help="use only right Joy-Cons f
 
 args = parser.parse_args()
 
-# Check if hid_nintendo module is installed
-process = subprocess.Popen(["modinfo", "hid_nintendo"], stdout=subprocess.DEVNULL)
-process.communicate()
-hid_nintendo_installed = process.returncode
+def main():
+    # Check if hid_nintendo module is installed
+    process = subprocess.Popen(["modinfo", "hid_nintendo"], stdout=subprocess.DEVNULL)
+    process.communicate()
+    hid_nintendo_installed = process.returncode
 
-if hid_nintendo_installed == 1:
-    print("Seems like hid_nintendo is not installed.")
-    exit()
+    if hid_nintendo_installed == 1:
+        print("Seems like hid_nintendo is not installed.")
+        exit()
 
-# Check if hid_nintendo module is loaded
-process = subprocess.Popen(["/bin/sh", "-c", 'lsmod | grep hid_nintendo'], stdout=subprocess.DEVNULL)
-process.communicate()
-hid_nintendo_loaded = process.returncode
+    # Check if hid_nintendo module is loaded
+    process = subprocess.Popen(["/bin/sh", "-c", 'lsmod | grep hid_nintendo'], stdout=subprocess.DEVNULL)
+    process.communicate()
+    hid_nintendo_loaded = process.returncode
 
-if hid_nintendo_loaded == 1:
-    print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
-    exit()
+    if hid_nintendo_loaded == 1:
+        print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
+        exit()
 
-server = UDPServer(args.ip, args.port)
-server.start()
+    stop_event = Event()
+    device_thread = Thread(target=handle_devices, args=(stop_event,))
+    device_thread.daemon = True
+    device_thread.start()
 
-def signal_handler(signal, frame):
-    print("Stopping server...")
-    server.stop()
+    def signal_handler(signal, frame):
+        print("Stopping servers...")
+        stop_event.set()
+        device_thread.join()
 
-signal.signal(signal.SIGINT, signal_handler)
-signal.pause()
+    signal.signal(signal.SIGINT, signal_handler)
+    signal.pause()
+
+if __name__ == "__main__":
+    main()
