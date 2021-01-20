@@ -20,10 +20,10 @@
     "button_share": "BTN_SELECT",
     "button_options": "BTN_START",
     "button_ps": "BTN_MODE",
-    "motion_y": null,
+    "accel_x": null,
+    "accel_y": null,
+    "accel_z": null,
     "motion_x": null,
-    "motion_z": null,
-    "orientation_roll": null,
-    "orientation_yaw": null,
-    "orientation_pitch": null
+    "motion_y": null,
+    "motion_z": null
 }
