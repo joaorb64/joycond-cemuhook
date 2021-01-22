@@ -50,8 +50,13 @@ def get_led_status(device):
     return leds
 
 def get_player_id(device):
+    try:
+        leds = device.items()
+    except AttributeError:
+        leds = get_led_status(device).items()
+
     player = 0
-    for led, status in sorted(get_led_status(device).items()):
+    for led, status in sorted(leds):
         if "player" in led:
             if status == '1':
                 player += 1
@@ -62,7 +67,11 @@ def get_player_id(device):
 
     # Combined devices don't have real leds and use evdev API instead
     if not player:
-        player = len(device.leds())
+        try:
+            player = len(device.leds())
+        except AttributeError:
+            pass
+
     return player
 
 class BaseMessage(bytearray):
@@ -121,7 +130,7 @@ class SwitchDevice:
         if not self.led_status:
             self.led_status = get_led_status(motion_device)
 
-        self.player_id = get_player_id(self.device)
+        self.player_id = get_player_id(self.led_status)
 
         self.keymap = None
 
@@ -601,17 +610,17 @@ def handle_devices(stop_event):
     blacklisted = []
     servers = []
 
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
     print("Looking for Nintendo Switch controllers...")
+
+    taken_slots = lambda: sum(server.connected_devices() for server in servers)
 
     while not stop_event.is_set():
         slots = sum((server.slots for server in servers), [])
 
-        evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
-
         # Filter devices that were already assigned or couldn't be assigned
-        evdev_devices = [d for d in evdev_devices if d not in blacklisted and not any(d in [dd.device, dd.motion_device] for dd in slots if dd)]
+        evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()
+                         if path not in blacklisted
+                            and not any(path in [slot.device.path, slot.motion_device.path] for slot in slots if slot)]
 
         valid_device_names = ["Nintendo Switch Left Joy-Con",
                               "Nintendo Switch Right Joy-Con",
@@ -620,8 +629,6 @@ def handle_devices(stop_event):
 
         # Added for backwards compatibility with older versions of joycond
         combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
-
-        taken_slots = lambda: sum(server.connected_devices() for server in servers)
 
         # players 1-4, 0 for invalid devices
         players = {i:[] for i in range(UDPServer.MAX_PADS+1)}
@@ -639,7 +646,7 @@ def handle_devices(stop_event):
             # This can lead to buggy behaviour and should be blacklisted for now
             elif len(devices) > 3:
                 print(F"More than four players detected. Ignoring player {player}.")
-                blacklisted.extend(devices)
+                blacklisted.extend([device.path for device in devices])
                 continue
 
             # Could happen when one Joy-Con in a combined pair is disconnected and then reconnected
@@ -689,7 +696,7 @@ def handle_devices(stop_event):
                     removed_device = next((d for d in motion_devices if removed in d.name), None)
                     if removed_device:
                         motion_devices.remove(removed_device)
-                        blacklisted.append(removed_device)
+                        blacklisted.append(removed_device.path)
 
             add_devices(device, motion_devices)
 
@@ -706,7 +713,7 @@ def handle_devices(stop_event):
         if active_devices != taken_slots():
             print_slots()
 
-        stop_event.wait(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
+        stop_event.wait(0.5) # sleep for 0.5 seconds to avoid 100% cpu usage
 
     for server in servers:
         server.stop()
