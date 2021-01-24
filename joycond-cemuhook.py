@@ -1,7 +1,7 @@
 import sys
 import evdev
 import pyudev
-from threading import Thread, Event
+import threading
 import socket
 import struct
 from binascii import crc32
@@ -13,7 +13,6 @@ import json
 import argparse
 import subprocess
 from termcolor import colored
-from collections import OrderedDict
 from os.path import basename
 
 def print_verbose(str):
@@ -51,8 +50,13 @@ def get_led_status(device):
     return leds
 
 def get_player_id(device):
+    try:
+        leds = device.items()
+    except AttributeError:
+        leds = get_led_status(device).items()
+
     player = 0
-    for led, status in sorted(get_led_status(device).items()):
+    for led, status in sorted(leds):
         if "player" in led:
             if status == '1':
                 player += 1
@@ -63,10 +67,14 @@ def get_player_id(device):
 
     # Combined devices don't have real leds and use evdev API instead
     if not player:
-        player = len(device.leds())
+        try:
+            player = len(device.leds())
+        except AttributeError:
+            pass
+
     return player
 
-class Message(list):
+class BaseMessage(bytearray):
     Types = dict(version=bytes([0x00, 0x00, 0x10, 0x00]),
                  ports=bytes([0x01, 0x00, 0x10, 0x00]),
                  data=bytes([0x02, 0x00, 0x10, 0x00]))
@@ -75,99 +83,67 @@ class Message(list):
         self.extend([
             0x44, 0x53, 0x55, 0x53,  # DSUS,
             0xE9, 0x03,  # protocol version (1001),
-        ])
-
-        # data length
-        self.extend(bytes(struct.pack('<H', len(data) + 4)))
-
-        self.extend([
+            *struct.pack('<H', len(data) + 4),  # data length
             0x00, 0x00, 0x00, 0x00,  # place for CRC32
             0xff, 0xff, 0xff, 0xff,  # server ID
+            *BaseMessage.Types[message_type],  # data type
+            *data
         ])
 
-        self.extend(Message.Types[message_type])  # data type
-
-        self.extend(data)
-
         # CRC32
-        crc = crc32(bytes(self)) & 0xffffffff
-        self[8:12] = bytes(struct.pack('<I', crc))
+        crc = crc32(self) & 0xffffffff
+        self[8:12] = struct.pack('<I', crc)
+
+class Message(BaseMessage):
+    def __init__(self, message_type, device, data=[0]):
+        index = getattr(device, 'index', device) & 0xff
+
+        # Shared response for ports and data messages
+        data = [
+            index,  # pad id
+            0x02 if getattr(device, 'connected', False) else 0x00,  # state (disconnected/connected)
+            0x02,  # model (full gyro)
+            getattr(device, 'connection_type', 0x00),  # connection type (n.a./usb/bluetooth)
+            *(getattr(device, 'mac', [0x00] * 6)),  # MAC
+            getattr(device, 'battery_status', 0x00)  # battery status
+        ] + data
+
+        super(Message, self).__init__(message_type, data)
 
 class SwitchDevice:
-    def __init__(self, server, device, motion_device, motion_only=False):
+    def __init__(self, server, index, device, motion_device, motion_only=False):
         self.server = server
-
+        self.index = index
         self.device = device
         self.motion_device = motion_device
-
-        self.disconnected = False
+        self.motion_only = motion_only
 
         self.name = device.name
-        self.serial = motion_device.uniq if motion_device.uniq != "" else "00:00:00:00:00:00"
-        self.mac = [int("0x"+part, 16) for part in self.serial.split(":")]
+        self.serial = motion_device.uniq if motion_device.uniq else "00:00:00:00:00:00"
+        self.mac = [int(part, 16) for part in self.serial.split(":")]
 
-        self.led_status = get_led_status(self.device)
+        # Connection type (1 = USB, 2 = Bluetooth)
+        self.connection_type = 0x01 if "Grip" in motion_device.name else 0x02
+
+        self.led_status = get_led_status(device)
 
         if not self.led_status:
-            self.led_status = get_led_status(self.motion_device)
+            self.led_status = get_led_status(motion_device)
 
-        self.player_id = get_player_id(self.device)
-
-        self.state = {
-            "left_analog_x": 0x00,
-            "left_analog_y": 0x00,
-            "right_analog_x": 0x00,
-            "right_analog_y": 0x00,
-            "dpad_up": 0x00,
-            "dpad_down": 0x00,
-            "dpad_left": 0x00,
-            "dpad_right": 0x00,
-            "button_cross": 0x00,
-            "button_circle": 0x00,
-            "button_square": 0x00,
-            "button_triangle": 0x00,
-            "button_l1": 0x00,
-            "button_l2": 0x00,
-            "button_l3": 0x00,
-            "button_r1": 0x00,
-            "button_r2": 0x00,
-            "button_r3": 0x00,
-            "button_share": 0x00,
-            "button_options": 0x00,
-            "button_ps": 0x00,
-            "motion_y": 0x00,
-            "motion_x": 0x00,
-            "motion_z": 0x00,
-            "orientation_roll": 0x00,
-            "orientation_yaw": 0x00,
-            "orientation_pitch": 0x00,
-            "timestamp": 0x00,
-            "battery": 0x00
-        }
+        self.player_id = get_player_id(self.led_status)
 
         self.keymap = None
 
         with open('profiles/'+self.name+'.json', 'r') as f:
             self.keymap = json.load(f)
 
-        self.motion_x = 0
-        self.motion_y = 0
-        self.motion_z = 0
-        
-        self.accel_x = 0
-        self.accel_y = 0
-        self.accel_z = 0
+        self.state = {key:0x00 for key in self.keymap.keys()}
+        self.state.update(motion_x=0.0, motion_y=0.0, motion_z=0.0)
 
-        self.motion_only = motion_only
+        self.battery = None
+        self.dbus_interface, self.dbus_properties_interface = self.get_battery_dbus_interface()
 
-        self.battery_level = None
-        self.battery_state = None
-        self.dbus_interface = None
-        self.dbus_properties_interface = None
-        self.get_battery_dbus_interface()
-
-        self.thread = Thread(target=self._worker)
-        self.thread.daemon = True
+        self.thread = threading.Thread(target=self._worker)
         self.thread.start()
 
     def _worker(self):
@@ -196,15 +172,13 @@ class SwitchDevice:
             task.cancel()
 
         # Wait for all tasks to finish
-        self._loop.run_until_complete(asyncio.gather(*asyncio.all_tasks(self._loop)))
-        asyncio.get_event_loop().close()
+        self._loop.run_until_complete(asyncio.wait(pending))
+        self._loop.close()
 
-        self._disconnect()
-
-    def _disconnect(self):
+        self.device.close()
+        self.motion_device.close()
         print(F"Device disconnected: {self.name}")
         self.server.report_clean(self)
-        self.disconnected = True
 
     async def _wait_for_termination(self):
         self._terminate_event = asyncio.Event()
@@ -223,25 +197,25 @@ class SwitchDevice:
             async for event in self.motion_device.async_read_loop():
                 if event.type == evdev.ecodes.SYN_REPORT:
                     self.server.report(self, True)
-                    self.motion_x = 0
-                    self.motion_y = 0
-                    self.motion_z = 0
+                    self.state['motion_x'] = 0.0
+                    self.state['motion_y'] = 0.0
+                    self.state['motion_z'] = 0.0
                 elif event.type == evdev.ecodes.EV_ABS:
                     # Get info about the axis we're reading the event from
                     axis = self.motion_device.absinfo(event.code)
 
                     if event.code == evdev.ecodes.ABS_RX:
-                        self.motion_x += event.value / axis.resolution
+                        self.state['motion_x'] += event.value / axis.resolution
                     if event.code == evdev.ecodes.ABS_RY:
-                        self.motion_y += event.value / axis.resolution
+                        self.state['motion_y'] += event.value / axis.resolution
                     if event.code == evdev.ecodes.ABS_RZ:
-                        self.motion_z += event.value / axis.resolution
+                        self.state['motion_z'] += event.value / axis.resolution
                     if event.code == evdev.ecodes.ABS_X:
-                        self.accel_x = event.value / axis.resolution
+                        self.state['accel_x'] = event.value / axis.resolution
                     if event.code == evdev.ecodes.ABS_Y:
-                        self.accel_y = event.value / axis.resolution
+                        self.state['accel_y'] = event.value / axis.resolution
                     if event.code == evdev.ecodes.ABS_Z:
-                        self.accel_z = event.value / axis.resolution
+                        self.state['accel_z'] = event.value / axis.resolution
         except (asyncio.CancelledError, OSError) as e:
             print_verbose("Motion events task ended")
 
@@ -252,21 +226,19 @@ class SwitchDevice:
                 if event.type == evdev.ecodes.SYN_REPORT:
                     self.server.report(self)
                 if event.type == evdev.ecodes.EV_ABS:
-                    for ps_key in self.keymap:
-                        key_mine = self.keymap.get(ps_key, None)
-                        if key_mine == None:
+                    for ps_key, key_mine in self.keymap.items():
+                        if key_mine is None:
                             continue
 
-                        if event.code == evdev.ecodes.ecodes.get(key_mine.replace("-", ""), None):
+                        if event.code == evdev.ecodes.ecodes.get(key_mine.replace("-", "")):
                             axis = self.device.absinfo(evdev.ecodes.ecodes.get(key_mine.replace("-", "")))
-                            self.state[ps_key] = event.value / axis.max
-                            self.state[ps_key] = clamp(self.state[ps_key], -1, 1)
-                            if(key_mine[0] == "-"):
-                                self.state[ps_key] = -self.state[ps_key]
+                            self.state[ps_key] = clamp(event.value / axis.max, -1, 1)
+                            if key_mine.startswith("-"):
+                                self.state[ps_key] *= -1
 
                 if event.type == evdev.ecodes.EV_KEY:
-                    for ps_key in self.keymap:
-                        if event.code == evdev.ecodes.ecodes.get(self.keymap.get(ps_key, None), None):
+                    for ps_key, key_mine in self.keymap.items():
+                        if event.code == evdev.ecodes.ecodes.get(key_mine):
                             self.state[ps_key] = 0xFF if event.value == 1 else 0x00
         except (asyncio.CancelledError, OSError) as e:
             print_verbose("Input events task ended")
@@ -287,13 +259,11 @@ class SwitchDevice:
             properties = dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
 
             if properties["Serial"] == self.serial:
-                self.dbus_interface = dbus_interface
-                self.dbus_properties_interface = dbus_properties_interface
-                self.battery_level = properties["Percentage"]
-                self.battery_state = properties["State"]
-                print_verbose("Found dbus interface for battery level reading. Value: "+str(self.battery_level))
-                return True
-        return False
+                self.battery = properties["Percentage"]
+                print_verbose("Found dbus interface for battery level reading. Value: "+str(self.battery))
+                return dbus_interface, dbus_properties_interface
+
+        return None, None
     
     async def _get_battery_level(self):
         print_verbose("Battery level reading thread started")
@@ -301,42 +271,46 @@ class SwitchDevice:
             while self.dbus_interface != None:
                 self.dbus_interface.Refresh()
                 properties = self.dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
-                if properties["Percentage"] != self.battery_level:
+                if properties["Percentage"] != self.battery:
                     print_verbose("Battery level changed")
-                    self.battery_level = properties["Percentage"]
-                    self.battery_state = properties["State"]
+                    self.battery = properties["Percentage"]
                     self.server.print_slots()
                 await asyncio.sleep(30)
         except (asyncio.CancelledError, Exception) as e:
             print_verbose("Battery level reading task ended")
-            self.battery_level = None
-            self.battery_state = None
-    
-    def get_report(self):
-        report = self.state
+            self.battery = None
 
-        if self.battery_level == None:
-            report["battery"] = 0x00
-        elif self.battery_level < 10:
-            report["battery"] = 0x01
-        elif self.battery_level < 25:
-            report["battery"] = 0x02
-        elif self.battery_level < 75:
-            report["battery"] = 0x03
-        elif self.battery_level < 90:
-            report["battery"] = 0x04
+    @property
+    def connected(self):
+        try:
+            return self._loop.is_running()
+        except AttributeError:
+            return self.thread.is_alive()
+
+    @property
+    def battery_status(self):
+        if self.battery is None:
+            return 0x00
+        elif self.battery < 10:
+            return 0x01
+        elif self.battery < 25:
+            return 0x02
+        elif self.battery < 75:
+            return 0x03
+        elif self.battery < 90:
+            return 0x04
         else:
-            report["battery"] = 0x05
-        
-        self.state["battery"] = report["battery"]
+            return 0x05
 
-        if self.device == None:
-            return report
-        
-        return report
+    @property
+    def report(self):
+        state = self.state.copy()
+        state["timestamp"] = time.time_ns() // 1000
+        return state
 
 class UDPServer:
     MAX_PADS = 4
+    TIMEOUT = 5
 
     def __init__(self, host='', port=26760):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -345,70 +319,59 @@ class UDPServer:
         self.counter = 0
         self.clients = dict()
         self.slots = [None] * UDPServer.MAX_PADS
-        self.stop_event = Event()
+        self.stop_event = threading.Event()
 
     def _res_ports(self, index):
-        data = [
-            index,  # pad id
-            0x00,  # state (disconnected)
-            0x03,  # model (generic)
-            0x01,  # connection type (usb)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # Mac
-            0x00,  # battery (charged)
-            0x00,  # ?
-        ]
+        device = self.slots[index]
+        if device is None:
+            device = index
 
-        if self.slots[index]:
-            device = self.slots[index]
-            data = [
-                index,  # pad id
-                0x02,  # state (connected)
-                0x03,  # model (generic)
-                0x01,  # connection type (usb)
-                *device.mac,  # MAC
-                device.state["battery"],  # battery (charged)
-                0x00,  # ?
-            ]
-
-        return Message('ports', data)
-    
-    @staticmethod
-    def _compat_ord(value):
-        return ord(value) if sys.version_info < (3, 0) else value
+        return Message('ports', device)
 
     def _req_ports(self, message, address):
-        requests_count = struct.unpack("<i", message[20:24])[0]
-        for i in range(requests_count):
-            index = self._compat_ord(message[24 + i])
-            self.sock.sendto(bytes(self._res_ports(index)), address)
+        requests_count = struct.unpack("<I", message[20:24])[0]
+
+        for slot_id in message[24 : 24 + requests_count]:
+            try:
+                self.sock.sendto(self._res_ports(slot_id), address)
+            except IndexError:
+                print('[udp] Received malformed ports request')
+                return
 
     def _req_data(self, message, address):
-        flags = self._compat_ord(message[24])
-        reg_id = self._compat_ord(message[25])
-        slot_id = self._compat_ord(message[21])
-        # reg_mac = message[26:32]
+        reg_id = message[20]
+        slot_id = message[21]
+        # reg_mac = message[22:28]
 
-        if flags == 0 and reg_id == 0:  # TODO: Check MAC
-            if address not in self.clients:
-                print('[udp] Client connected: {0[0]}:{0[1]}'.format(address))
+        if address not in self.clients:
+            print(F'[udp] Client connected: {address[0]}:{address[1]}')
+            self.clients[address] = dict(controllers=[False] * 4)
 
-                self.clients[address] = {
-                    "timestamp": time.time(),
-                    "controllers": [0,0,0,0]
-                }
-            else:
-                self.clients[address]["timestamp"] = time.time()
-                self.clients[address]["controllers"][slot_id] = 1
+        self.clients[address]["timestamp"] = time.time()
+
+        # Register all slots
+        if reg_id == 0:
+            self.clients[address]["controllers"] = [True] * 4
+
+        # Register a single slot
+        elif reg_id == 1:
+            self.clients[address]["controllers"][slot_id] = True
+
+        # MAC-based registration (TODO)
+        elif reg_id == 2:
+            print("[udp] Ignored request for MAC-based registration (unimplemented)")
+        else:
+            print(F"[udp] Unknown data request type: {reg_id}")
     
     def _res_data(self, controller_index, message):
         now = time.time()
         for address, data in self.clients.copy().items():
-            if data["controllers"][controller_index] == 1:
-                if now - data["timestamp"] < 5:
-                    self.sock.sendto(message, address)
-                else:
-                    print('[udp] Client disconnected: {0[0]}:{0[1]}'.format(address))
-                    del self.clients[address]
+            if now - data["timestamp"] > UDPServer.TIMEOUT:
+                print(F'[udp] Client disconnected: {address[0]}:{address[1]}')
+                del self.clients[address]
+
+            elif data["controllers"][controller_index]:
+                self.sock.sendto(message, address)
     
     def _handle_request(self, request):
         message, address = request
@@ -430,31 +393,24 @@ class UDPServer:
             print('[udp] Unknown message type: ' + str(msg_type))
 
     def report(self, device, report_motion=False):
-        if device == None:
-            return None
-        
-        if device.device == None:
-            return None
-        
-        i = self.slots.index(device) if device in self.slots else -1
+        device_state = device.report
 
-        if i == -1:
-            return None
-        
-        device_state = device.get_report()
-
-        data = [
-            i & 0xff,  # pad id
-            0x02 if device.device != None else 0x00,  # state (connected)
-            0x02,  # model (generic)
-            0x02,  # connection type (usb)
-            *device.mac,  # MAC
-            device_state["battery"],  # battery (charged)
-            0x01  # is active (true)
+        # Acceleration in g's
+        sensors = [
+            device_state.get('accel_y'),
+            - device_state.get('accel_z'),
+            device_state.get('accel_x'),
         ]
 
-        data.extend(struct.pack('<I', self.counter))
-        self.counter += 1
+        # Gyro rotation in deg/s
+        if report_motion:
+            sensors.extend([
+                - device_state.get('motion_y'),
+                - device_state.get('motion_z'),
+                device_state.get('motion_x')
+                ])
+        else:
+            sensors.extend([0.0, 0.0, 0.0])
 
         buttons1 = 0x00
         buttons1 |= int(abs_to_button(device_state.get("button_share", 0x00))/255)
@@ -476,7 +432,9 @@ class UDPServer:
         buttons2 |= int(abs_to_button(device_state.get("button_cross", 0x00))/255) << 6
         buttons2 |= int(abs_to_button(device_state.get("button_square", 0x00))/255) << 7
 
-        data.extend([
+        data = [
+            0x01,  # is active (true)
+            *struct.pack('<I', self.counter),
             buttons1,
             buttons2,
             abs_to_button(device_state.get("button_ps", 0x00)),  # PS
@@ -514,54 +472,23 @@ class UDPServer:
 
             0x00, 0x00,  # trackpad second x
             0x00, 0x00,  # trackpad second y
-        ])
 
-        data.extend(bytes(struct.pack('<Q', time.time_ns() // 1000)))
-
-        if device.motion_device != None:
-            sensors = [
-                # Acceleration in g's
-                device.accel_y,
-                - device.accel_z,
-                device.accel_x,
-                # Gyro rotation in deg/s
-                - device.motion_y,
-                - device.motion_z,
-                device.motion_x,
-            ]
-
-            if report_motion == False:
-                sensors[3] = 0
-                sensors[4] = 0
-                sensors[5] = 0
-        else:
-            sensors = [0, 0, 0, 0, 0, 0]
-
-        for sensor in sensors:
-            data.extend(struct.pack('<f', float(sensor)))
-        
-        self._res_data(i, bytes(Message('data', data)))
-    
-    def report_clean(self, device):
-        i = self.slots.index(device) if device in self.slots else -1
-
-        data = [
-            i & 0xff,  # pad id
-            0x00,  # state (disconnected)
-            0x03,  # model (generic)
-            0x01,  # connection type (usb)
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, # Mac
-            0x00,  # battery (charged)
-            0x00,  # ?
+            *struct.pack('<Q', device_state.get("timestamp")),  # Motion data timestamp
+            *struct.pack('<ffffff', *sensors)  # Accelerometer and Gyroscope data
         ]
 
-        self._res_data(i, bytes(Message('data', data)))
+        self.counter += 1
+
+        self._res_data(device.index, Message('data', device, data))
+    
+    def report_clean(self, device):
+        self._res_data(device.index, Message('data', device))
     
     def add_device(self, device, motion_device, motion_only=False):
         # Find an empty slot for the new device
         for i, slot in enumerate(self.slots):
             if not slot:
-                self.slots[i] = SwitchDevice(self, device, motion_device, motion_only)
+                self.slots[i] = SwitchDevice(self, i, device, motion_device, motion_only)
                 return i
 
         # All four slots have been allocated
@@ -605,8 +532,8 @@ class UDPServer:
                 if not leds:
                     leds = "?"
 
-                if slot.battery_level:
-                    battery = F"{str(slot.battery_level)} {chr(ord('▁') + int(slot.battery_level * 7 / 100))}"
+                if slot.battery:
+                    battery = F"{str(slot.battery)} {chr(ord('▁') + int(slot.battery * 7 / 100))}"
                 else:
                     battery = "❌"
                 
@@ -626,8 +553,7 @@ class UDPServer:
         self.sock.close()
 
     def start(self):
-        self.thread = Thread(target=self._worker)
-        self.thread.daemon = True
+        self.thread = threading.Thread(target=self._worker)
         self.thread.start()
 
     def stop(self):
@@ -684,17 +610,17 @@ def handle_devices(stop_event):
     blacklisted = []
     servers = []
 
-    asyncio.set_event_loop(asyncio.new_event_loop())
-
     print("Looking for Nintendo Switch controllers...")
+
+    taken_slots = lambda: sum(server.connected_devices() for server in servers)
 
     while not stop_event.is_set():
         slots = sum((server.slots for server in servers), [])
 
-        evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()]
-
         # Filter devices that were already assigned or couldn't be assigned
-        evdev_devices = [d for d in evdev_devices if d not in blacklisted and not any(d in [dd.device, dd.motion_device] for dd in slots if dd)]
+        evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()
+                         if path not in blacklisted
+                            and not any(path in [slot.device.path, slot.motion_device.path] for slot in slots if slot)]
 
         valid_device_names = ["Nintendo Switch Left Joy-Con",
                               "Nintendo Switch Right Joy-Con",
@@ -703,8 +629,6 @@ def handle_devices(stop_event):
 
         # Added for backwards compatibility with older versions of joycond
         combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
-
-        taken_slots = lambda: sum(server.connected_devices() for server in servers)
 
         # players 1-4, 0 for invalid devices
         players = {i:[] for i in range(UDPServer.MAX_PADS+1)}
@@ -722,7 +646,7 @@ def handle_devices(stop_event):
             # This can lead to buggy behaviour and should be blacklisted for now
             elif len(devices) > 3:
                 print(F"More than four players detected. Ignoring player {player}.")
-                blacklisted.extend(devices)
+                blacklisted.extend([device.path for device in devices])
                 continue
 
             # Could happen when one Joy-Con in a combined pair is disconnected and then reconnected
@@ -772,7 +696,7 @@ def handle_devices(stop_event):
                     removed_device = next((d for d in motion_devices if removed in d.name), None)
                     if removed_device:
                         motion_devices.remove(removed_device)
-                        blacklisted.append(removed_device)
+                        blacklisted.append(removed_device.path)
 
             add_devices(device, motion_devices)
 
@@ -783,13 +707,13 @@ def handle_devices(stop_event):
         # Detect disconnected devices
         for server in servers:
             for i, slot in enumerate(server.slots):
-                if slot and slot.disconnected:
+                if slot and not slot.connected:
                     server.slots[i] = None
 
         if active_devices != taken_slots():
             print_slots()
 
-        stop_event.wait(0.2) # sleep for 0.2 seconds to avoid 100% cpu usage
+        stop_event.wait(0.5) # sleep for 0.5 seconds to avoid 100% cpu usage
 
     for server in servers:
         server.stop()
@@ -825,18 +749,16 @@ def main():
         print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
         exit()
 
-    stop_event = Event()
-    device_thread = Thread(target=handle_devices, args=(stop_event,))
-    device_thread.daemon = True
-    device_thread.start()
+    stop_event = threading.Event()
 
     def signal_handler(signal, frame):
         print("Stopping servers...")
         stop_event.set()
-        device_thread.join()
 
     signal.signal(signal.SIGINT, signal_handler)
-    signal.pause()
+    signal.signal(signal.SIGTERM, signal_handler)
+
+    handle_devices(stop_event)
 
 if __name__ == "__main__":
     main()
