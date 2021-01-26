@@ -13,7 +13,7 @@ import json
 import argparse
 import subprocess
 from termcolor import colored
-from os.path import basename
+import os.path
 
 def print_verbose(str):
     global args
@@ -132,13 +132,12 @@ class SwitchDevice:
 
         self.player_id = get_player_id(self.led_status)
 
-        self.keymap = None
+        with open(os.path.join('profiles', self.name + '.json')) as profile:
+            self.keymap = {evdev.ecodes.ecodes[ecode]:ps_key for ecode,ps_key in json.load(profile).items()}
 
-        with open('profiles/'+self.name+'.json', 'r') as f:
-            self.keymap = json.load(f)
-
-        self.state = {key:0x00 for key in self.keymap.keys()}
-        self.state.update(motion_x=0.0, motion_y=0.0, motion_z=0.0)
+        self.state = {ps_key.lstrip('-'):0x00 for ps_key in self.keymap.values()}
+        self.state.update(accel_x=0.0, accel_y=0.0, accel_z=0.0,
+                          motion_x=0.0, motion_y=0.0, motion_z=0.0)
 
         self.battery = None
         self.dbus_interface, self.dbus_properties_interface = self.get_battery_dbus_interface()
@@ -225,21 +224,24 @@ class SwitchDevice:
             async for event in self.device.async_read_loop():
                 if event.type == evdev.ecodes.SYN_REPORT:
                     self.server.report(self)
-                if event.type == evdev.ecodes.EV_ABS:
-                    for ps_key, key_mine in self.keymap.items():
-                        if key_mine is None:
-                            continue
 
-                        if event.code == evdev.ecodes.ecodes.get(key_mine.replace("-", "")):
-                            axis = self.device.absinfo(evdev.ecodes.ecodes.get(key_mine.replace("-", "")))
-                            self.state[ps_key] = clamp(event.value / axis.max, -1, 1)
-                            if key_mine.startswith("-"):
-                                self.state[ps_key] *= -1
+                elif event.type == evdev.ecodes.EV_KEY:
+                    try:
+                        ps_key = self.keymap[event.code]
+                    except KeyError:
+                        continue
 
-                if event.type == evdev.ecodes.EV_KEY:
-                    for ps_key, key_mine in self.keymap.items():
-                        if event.code == evdev.ecodes.ecodes.get(key_mine):
-                            self.state[ps_key] = 0xFF if event.value == 1 else 0x00
+                    self.state[ps_key] = 0xFF if event.value else 0x00
+
+                elif event.type == evdev.ecodes.EV_ABS:
+                    try:
+                        ps_key, negate = self.keymap[event.code].lstrip('-'), self.keymap[event.code].startswith('-')
+                    except KeyError:
+                        continue
+
+                    axis = self.device.absinfo(event.code)
+                    self.state[ps_key] = clamp(event.value / axis.max, -1, 1) * (-1 if negate else 1)
+
         except (asyncio.CancelledError, OSError) as e:
             print_verbose("Input events task ended")
     
@@ -684,7 +686,7 @@ def handle_devices(stop_event):
                     # This is the best guess we have to match combined device to it's individual Joy-Cons
                     if len(combined_devices) > 1:
                         context = pyudev.Context()
-                        combined_devices.sort(key=lambda d: next(iter(context.list_devices(sys_name=basename(d.path)))).time_since_initialized, reverse=True)
+                        combined_devices.sort(key=lambda d: next(iter(context.list_devices(sys_name=os.path.basename(d.path)))).time_since_initialized, reverse=True)
 
                     device = combined_devices.pop(0)
 
