@@ -55,6 +55,13 @@ def get_player_id(device):
     except AttributeError:
         leds = get_led_status(device).items()
 
+    # Combined devices don't have real leds and use evdev API instead
+    if not leds:
+        try:
+            return len(device.leds())
+        except AttributeError:
+            pass
+
     player = 0
     for led, status in sorted(leds):
         if "player" in led:
@@ -64,13 +71,6 @@ def get_player_id(device):
             # Should prevent reading an incorrect player id during a temporary led state in some cases
             else:
                 break
-
-    # Combined devices don't have real leds and use evdev API instead
-    if not player:
-        try:
-            player = len(device.leds())
-        except AttributeError:
-            pass
 
     return player
 
