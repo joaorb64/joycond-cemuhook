@@ -69,6 +69,8 @@ def get_player_id(device):
     if not player:
         try:
             player = len(device.leds())
+            if any([led[0] == 'numlock' for led in leds]):
+                player = 0
         except AttributeError:
             pass
 
