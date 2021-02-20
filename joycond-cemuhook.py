@@ -629,6 +629,9 @@ def handle_devices(stop_event):
                               "Nintendo Switch Pro Controller",
                               "Nintendo Switch Combined Joy-Cons"]
 
+        # Filter for Nintendo Switch devices only
+        evdev_devices = [d for d in evdev_devices if any(d.name.startswith(valid_name) for valid_name in valid_device_names)]
+
         # Added for backwards compatibility with older versions of joycond
         combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
 
