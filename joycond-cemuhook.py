@@ -414,6 +414,10 @@ class UDPServer:
         else:
             sensors.extend([0.0, 0.0, 0.0])
 
+        if "Pro Controller" in device.name:
+            device_state['dpad_left'] = -device_state['dpad_right']
+            device_state['dpad_up'] = -device_state['dpad_down']
+
         buttons1 = 0x00
         buttons1 |= int(abs_to_button(device_state.get("button_share", 0x00))/255)
         buttons1 |= int(abs_to_button(device_state.get("button_l3", 0x00))/255) << 1
