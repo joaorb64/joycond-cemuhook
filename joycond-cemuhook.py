@@ -133,9 +133,19 @@ class SwitchDevice:
         self.player_id = get_player_id(self.led_status)
 
         with open(os.path.join('profiles', self.name + '.json')) as profile:
-            self.keymap = {evdev.ecodes.ecodes[ecode]:ps_key for ecode,ps_key in json.load(profile).items()}
+            items = json.load(profile).items()
+            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]:[] for ps_key,ecode in items if ecode is not None}
+            for ps_key,ecode in items:
+                if ecode is not None:
+                    prefix = '-' if ecode.startswith('-') else ''
+                    self.keymap[evdev.ecodes.ecodes[ecode.lstrip('-')]].append(prefix+ps_key)
+        
+        print(self.keymap)
 
-        self.state = {ps_key.lstrip('-'):0x00 for ps_key in self.keymap.values()}
+        self.state = {ps_key.lstrip('-'):0x00 for ps_key,ecode in items}
+
+        print(self.state)
+
         self.state.update(accel_x=0.0, accel_y=0.0, accel_z=0.0,
                           motion_x=0.0, motion_y=0.0, motion_z=0.0)
 
@@ -227,20 +237,25 @@ class SwitchDevice:
 
                 elif event.type == evdev.ecodes.EV_KEY:
                     try:
-                        ps_key = self.keymap[event.code]
+                        ps_keys = self.keymap[event.code]
                     except KeyError:
                         continue
 
-                    self.state[ps_key] = 0xFF if event.value else 0x00
+                    for ps_key in ps_keys:
+                        self.state[ps_key] = 0xFF if event.value else 0x00
 
                 elif event.type == evdev.ecodes.EV_ABS:
                     try:
-                        ps_key, negate = self.keymap[event.code].lstrip('-'), self.keymap[event.code].startswith('-')
+                        ps_keys = self.keymap[event.code]
                     except KeyError:
                         continue
 
                     axis = self.device.absinfo(event.code)
-                    self.state[ps_key] = clamp(event.value / axis.max, -1, 1) * (-1 if negate else 1)
+
+                    for ps_key in ps_keys:
+                        negate = ps_key.startswith('-')
+                        ps_key = ps_key.lstrip('-')
+                        self.state[ps_key] = clamp(event.value / axis.max, -1, 1) * (-1 if negate else 1)
 
         except (asyncio.CancelledError, OSError) as e:
             print_verbose("Input events task ended")
