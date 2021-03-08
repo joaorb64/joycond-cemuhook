@@ -133,18 +133,14 @@ class SwitchDevice:
         self.player_id = get_player_id(self.led_status)
 
         with open(os.path.join('profiles', self.name + '.json')) as profile:
-            items = json.load(profile).items()
-            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]:[] for ps_key,ecode in items if ecode is not None}
-            for ps_key,ecode in items:
+            original_keymap = json.load(profile).items()
+            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]:[] for ps_key,ecode in original_keymap if ecode is not None}
+            for ps_key,ecode in original_keymap:
                 if ecode is not None:
                     prefix = '-' if ecode.startswith('-') else ''
                     self.keymap[evdev.ecodes.ecodes[ecode.lstrip('-')]].append(prefix+ps_key)
-        
-        print(self.keymap)
 
-        self.state = {ps_key.lstrip('-'):0x00 for ps_key,ecode in items}
-
-        print(self.state)
+        self.state = {ps_key.lstrip('-'):0x00 for ps_key,ecode in original_keymap}
 
         self.state.update(accel_x=0.0, accel_y=0.0, accel_z=0.0,
                           motion_x=0.0, motion_y=0.0, motion_z=0.0)
@@ -254,8 +250,7 @@ class SwitchDevice:
 
                     for ps_key in ps_keys:
                         negate = ps_key.startswith('-')
-                        ps_key = ps_key.lstrip('-')
-                        self.state[ps_key] = clamp(event.value / axis.max, -1, 1) * (-1 if negate else 1)
+                        self.state[ps_key.lstrip('-')] = clamp(event.value / axis.max, -1, 1) * (-1 if negate else 1)
 
         except (asyncio.CancelledError, OSError) as e:
             print_verbose("Input events task ended")
