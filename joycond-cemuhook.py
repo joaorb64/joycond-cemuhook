@@ -133,14 +133,14 @@ class SwitchDevice:
         self.player_id = get_player_id(self.led_status)
 
         with open(os.path.join('profiles', self.name + '.json')) as profile:
-            original_keymap = json.load(profile).items()
-            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]:[] for ps_key,ecode in original_keymap if ecode is not None}
-            for ps_key,ecode in original_keymap:
+            original_keymap = json.load(profile)
+            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]:[] for ps_key,ecode in original_keymap.items() if ecode is not None}
+            for ps_key,ecode in original_keymap.items():
                 if ecode is not None:
                     prefix = '-' if ecode.startswith('-') else ''
                     self.keymap[evdev.ecodes.ecodes[ecode.lstrip('-')]].append(prefix+ps_key)
 
-        self.state = {ps_key.lstrip('-'):0x00 for ps_key,ecode in original_keymap}
+        self.state = {ps_key.lstrip('-'):0x00 for ps_key in original_keymap.keys()}
 
         self.state.update(accel_x=0.0, accel_y=0.0, accel_z=0.0,
                           motion_x=0.0, motion_y=0.0, motion_z=0.0)
