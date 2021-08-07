@@ -637,6 +637,7 @@ def handle_devices(stop_event):
         valid_device_names = ["Nintendo Switch Left Joy-Con",
                               "Nintendo Switch Right Joy-Con",
                               "Nintendo Switch Pro Controller",
+                              "Nintendo Switch Virtual Pro Controller",
                               "Nintendo Switch Combined Joy-Cons"]
 
         # Filter for Nintendo Switch devices only
@@ -670,7 +671,7 @@ def handle_devices(stop_event):
                 add_devices(previously_assigned.device, devices, not previously_assigned.motion_only)
                 continue
 
-            # Lone device
+            # Physical device (Pro-Con or a single Joy-Con)
             if all(d.uniq == devices[0].uniq for d in devices):
                 devices.sort(key=lambda d: d.name in valid_device_names, reverse=True)
                 try:
@@ -683,10 +684,10 @@ def handle_devices(stop_event):
                 devices.remove(device)
                 motion_devices = devices
 
-            # Paired Joy-Cons
+            # Virtual device (Combined Joy-Cons or Virtual Pro-Con)
             else:
                 try:
-                    device = next(d for d in devices if "Combined" in d.name)
+                    device = next(d for d in devices if "Combined" in d.name or "Virtual" in d.name)
                     devices.remove(device)
 
                 # Added for compatibility with older versions of joycond
