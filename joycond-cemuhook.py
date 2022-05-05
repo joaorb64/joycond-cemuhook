@@ -15,13 +15,16 @@ import subprocess
 from termcolor import colored
 import os.path
 
+
 def print_verbose(str):
     global args
     if args.verbose:
-        print(colored("Debug: ", "red", attrs=["bold"])+str)
+        print(colored("Debug: ", "red", attrs=["bold"]) + str)
+
 
 def clamp(my_value, min_value, max_value):
     return max(min(my_value, max_value), min_value)
+
 
 def abs_to_button(value):
     if value > 0.75:
@@ -30,10 +33,12 @@ def abs_to_button(value):
         value = 0
     return value
 
+
 def get_led_status(device):
     leds = {}
     context = pyudev.Context()
-    udev_device = context.list_devices(subsystem='input').match_attribute('uniq', device.uniq.encode()).match_attribute('name', device.name.encode())
+    udev_device = context.list_devices(subsystem='input').match_attribute('uniq', device.uniq.encode()).match_attribute(
+        'name', device.name.encode())
 
     # should match only one device
     udev_device = next(iter(udev_device))
@@ -48,6 +53,7 @@ def get_led_status(device):
         status = led.attributes.get('brightness').decode()
         leds[name] = status
     return leds
+
 
 def get_player_id(device):
     try:
@@ -74,6 +80,7 @@ def get_player_id(device):
 
     return player
 
+
 class BaseMessage(bytearray):
     Types = dict(version=bytes([0x00, 0x00, 0x10, 0x00]),
                  ports=bytes([0x01, 0x00, 0x10, 0x00]),
@@ -94,21 +101,23 @@ class BaseMessage(bytearray):
         crc = crc32(self) & 0xffffffff
         self[8:12] = struct.pack('<I', crc)
 
+
 class Message(BaseMessage):
     def __init__(self, message_type, device, data=[0]):
         index = getattr(device, 'index', device) & 0xff
 
         # Shared response for ports and data messages
         data = [
-            index,  # pad id
-            0x02 if getattr(device, 'connected', False) else 0x00,  # state (disconnected/connected)
-            0x02,  # model (full gyro)
-            getattr(device, 'connection_type', 0x00),  # connection type (n.a./usb/bluetooth)
-            *(getattr(device, 'mac', [0x00] * 6)),  # MAC
-            getattr(device, 'battery_status', 0x00)  # battery status
-        ] + data
+                   index,  # pad id
+                   0x02 if getattr(device, 'connected', False) else 0x00,  # state (disconnected/connected)
+                   0x02,  # model (full gyro)
+                   getattr(device, 'connection_type', 0x00),  # connection type (n.a./usb/bluetooth)
+                   *(getattr(device, 'mac', [0x00] * 6)),  # MAC
+                   getattr(device, 'battery_status', 0x00)  # battery status
+               ] + data
 
         super(Message, self).__init__(message_type, data)
+
 
 class SwitchDevice:
     def __init__(self, server, index, device, motion_device, motion_only=False):
@@ -134,13 +143,14 @@ class SwitchDevice:
 
         with open(os.path.join('profiles', self.name + '.json')) as profile:
             original_keymap = json.load(profile)
-            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]:[] for ps_key,ecode in original_keymap.items() if ecode is not None}
-            for ps_key,ecode in original_keymap.items():
+            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]: [] for ps_key, ecode in original_keymap.items() if
+                           ecode is not None}
+            for ps_key, ecode in original_keymap.items():
                 if ecode is not None:
                     prefix = '-' if ecode.startswith('-') else ''
-                    self.keymap[evdev.ecodes.ecodes[ecode.lstrip('-')]].append(prefix+ps_key)
+                    self.keymap[evdev.ecodes.ecodes[ecode.lstrip('-')]].append(prefix + ps_key)
 
-        self.state = {ps_key.lstrip('-'):0x00 for ps_key in original_keymap.keys()}
+        self.state = {ps_key.lstrip('-'): 0x00 for ps_key in original_keymap.keys()}
 
         self.state.update(accel_x=0.0, accel_y=0.0, accel_z=0.0,
                           motion_x=0.0, motion_y=0.0, motion_z=0.0)
@@ -156,21 +166,21 @@ class SwitchDevice:
         asyncio.set_event_loop(self._loop)
 
         # Motion reading task
-        tasks = {asyncio.ensure_future(self._handle_motion_events())}
+        tasks = {asyncio.ensure_future(self._handle_motion_events(), loop=self._loop)}
 
         # Input reading task
         if not self.motion_only:
-            tasks.add(asyncio.ensure_future(self._handle_events()))
+            tasks.add(asyncio.ensure_future(self._handle_events(), loop=self._loop))
 
         # Battery level reading task
         if self.dbus_interface and self.dbus_properties_interface:
-            tasks.add(asyncio.ensure_future(self._get_battery_level()))
+            tasks.add(asyncio.ensure_future(self._get_battery_level(), loop=self._loop))
 
         # Listen to termination request task
-        tasks.add(asyncio.ensure_future(self._wait_for_termination()))
+        tasks.add(asyncio.ensure_future(self._wait_for_termination(), loop=self._loop))
 
         # Start all tasks, stop at the first completed task
-        done, pending = asyncio.get_event_loop().run_until_complete(asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED))
+        done, pending = self._loop.run_until_complete(asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED))
 
         # Cancel all other tasks
         for task in pending:
@@ -254,7 +264,7 @@ class SwitchDevice:
 
         except (asyncio.CancelledError, OSError) as e:
             print_verbose("Input events task ended")
-    
+
     def get_battery_dbus_interface(self):
         bus = dbus.SystemBus()
         upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
@@ -272,11 +282,11 @@ class SwitchDevice:
 
             if properties["Serial"] == self.serial:
                 self.battery = properties["Percentage"]
-                print_verbose("Found dbus interface for battery level reading. Value: "+str(self.battery))
+                print_verbose("Found dbus interface for battery level reading. Value: " + str(self.battery))
                 return dbus_interface, dbus_properties_interface
 
         return None, None
-    
+
     async def _get_battery_level(self):
         print_verbose("Battery level reading thread started")
         try:
@@ -320,6 +330,7 @@ class SwitchDevice:
         state["timestamp"] = time.time_ns() // 1000
         return state
 
+
 class UDPServer:
     MAX_PADS = 4
     TIMEOUT = 5
@@ -327,7 +338,7 @@ class UDPServer:
     def __init__(self, host='', port=26760):
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.bind((host, port))
-        print_verbose("Started UDP server with ip "+str(host)+", port "+str(port))
+        print_verbose("Started UDP server with ip " + str(host) + ", port " + str(port))
         self.counter = 0
         self.clients = dict()
         self.slots = [None] * UDPServer.MAX_PADS
@@ -343,7 +354,7 @@ class UDPServer:
     def _req_ports(self, message, address):
         requests_count = struct.unpack("<I", message[20:24])[0]
 
-        for slot_id in message[24 : 24 + requests_count]:
+        for slot_id in message[24: 24 + requests_count]:
             try:
                 self.sock.sendto(self._res_ports(slot_id), address)
             except IndexError:
@@ -374,7 +385,7 @@ class UDPServer:
             print("[udp] Ignored request for MAC-based registration (unimplemented)")
         else:
             print(F"[udp] Unknown data request type: {reg_id}")
-    
+
     def _res_data(self, controller_index, message):
         now = time.time()
         for address, data in self.clients.copy().items():
@@ -384,7 +395,7 @@ class UDPServer:
 
             elif data["controllers"][controller_index]:
                 self.sock.sendto(message, address)
-    
+
     def _handle_request(self, request):
         message, address = request
 
@@ -420,29 +431,29 @@ class UDPServer:
                 - device_state.get('motion_y'),
                 - device_state.get('motion_z'),
                 device_state.get('motion_x')
-                ])
+            ])
         else:
             sensors.extend([0.0, 0.0, 0.0])
 
         buttons1 = 0x00
-        buttons1 |= int(abs_to_button(device_state.get("button_share", 0x00))/255)
-        buttons1 |= int(abs_to_button(device_state.get("button_l3", 0x00))/255) << 1
-        buttons1 |= int(abs_to_button(device_state.get("button_r3", 0x00))/255) << 2
-        buttons1 |= int(abs_to_button(device_state.get("button_options", 0x00))/255) << 3
-        buttons1 |= int(abs_to_button(device_state.get("dpad_up", 0x00))/255) << 4
-        buttons1 |= int(abs_to_button(device_state.get("dpad_right", 0x00))/255) << 5
-        buttons1 |= int(abs_to_button(device_state.get("dpad_down", 0x00))/255) << 6
-        buttons1 |= int(abs_to_button(device_state.get("dpad_left", 0x00))/255) << 7
+        buttons1 |= int(abs_to_button(device_state.get("button_share", 0x00)) / 255)
+        buttons1 |= int(abs_to_button(device_state.get("button_l3", 0x00)) / 255) << 1
+        buttons1 |= int(abs_to_button(device_state.get("button_r3", 0x00)) / 255) << 2
+        buttons1 |= int(abs_to_button(device_state.get("button_options", 0x00)) / 255) << 3
+        buttons1 |= int(abs_to_button(device_state.get("dpad_up", 0x00)) / 255) << 4
+        buttons1 |= int(abs_to_button(device_state.get("dpad_right", 0x00)) / 255) << 5
+        buttons1 |= int(abs_to_button(device_state.get("dpad_down", 0x00)) / 255) << 6
+        buttons1 |= int(abs_to_button(device_state.get("dpad_left", 0x00)) / 255) << 7
 
         buttons2 = 0x00
-        buttons2 |= int(abs_to_button(device_state.get("button_l2", 0x00))/255)
-        buttons2 |= int(abs_to_button(device_state.get("button_r2", 0x00))/255) << 1
-        buttons2 |= int(abs_to_button(device_state.get("button_l1", 0x00))/255) << 2
-        buttons2 |= int(abs_to_button(device_state.get("button_r1", 0x00))/255) << 3
-        buttons2 |= int(abs_to_button(device_state.get("button_triangle", 0x00))/255) << 4
-        buttons2 |= int(abs_to_button(device_state.get("button_circle", 0x00))/255) << 5
-        buttons2 |= int(abs_to_button(device_state.get("button_cross", 0x00))/255) << 6
-        buttons2 |= int(abs_to_button(device_state.get("button_square", 0x00))/255) << 7
+        buttons2 |= int(abs_to_button(device_state.get("button_l2", 0x00)) / 255)
+        buttons2 |= int(abs_to_button(device_state.get("button_r2", 0x00)) / 255) << 1
+        buttons2 |= int(abs_to_button(device_state.get("button_l1", 0x00)) / 255) << 2
+        buttons2 |= int(abs_to_button(device_state.get("button_r1", 0x00)) / 255) << 3
+        buttons2 |= int(abs_to_button(device_state.get("button_triangle", 0x00)) / 255) << 4
+        buttons2 |= int(abs_to_button(device_state.get("button_circle", 0x00)) / 255) << 5
+        buttons2 |= int(abs_to_button(device_state.get("button_cross", 0x00)) / 255) << 6
+        buttons2 |= int(abs_to_button(device_state.get("button_square", 0x00)) / 255) << 7
 
         data = [
             0x01,  # is active (true)
@@ -492,10 +503,10 @@ class UDPServer:
         self.counter += 1
 
         self._res_data(device.index, Message('data', device, data))
-    
+
     def report_clean(self, device):
         self._res_data(device.index, Message('data', device))
-    
+
     def add_device(self, device, motion_device, motion_only=False):
         # Find an empty slot for the new device
         for i, slot in enumerate(self.slots):
@@ -519,14 +530,14 @@ class UDPServer:
     def print_slots(self):
         print(colored(F" {self.sock.getsockname()} ".center(55, "="), attrs=["bold"]))
 
-        print (colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
-            .format("Device", "LED status", "Battery Lv", "MAC Addr"))
+        print(colored("{:<14} {:<12} {:<12} {:<12}", attrs=["bold"])
+              .format("Device", "LED status", "Battery Lv", "MAC Addr"))
 
         for i, slot in enumerate(self.slots):
             if not slot:
-                print(str(i+1)+" ❎ ")
+                print(str(i + 1) + " ❎ ")
             else:
-                device = str(i+1)+" "
+                device = str(i + 1) + " "
                 if "Left" in slot.name:
                     device += "🕹️ L"
                 elif "Right" in slot.name:
@@ -548,11 +559,12 @@ class UDPServer:
                     battery = F"{str(slot.battery)} {chr(ord('▁') + int(slot.battery * 7 / 100))}"
                 else:
                     battery = "❌"
-                
+
                 mac = slot.serial
 
                 # print device after calculating alignment because the gamepad symbols cause alignment errors
-                print(F'{"":<14} {colored(F"{leds:<12}", "green")} {colored(F"{battery:<12}", "green")} {mac:<12}\r{device}')
+                print(
+                    F'{"":<14} {colored(F"{leds:<12}", "green")} {colored(F"{battery:<12}", "green")} {mac:<12}\r{device}')
 
         print(colored("".center(55, "="), attrs=["bold"]))
 
@@ -632,7 +644,7 @@ def handle_devices(stop_event):
         # Filter devices that were already assigned or couldn't be assigned
         evdev_devices = [evdev.InputDevice(path) for path in evdev.list_devices()
                          if path not in blacklisted
-                            and not any(path in [slot.device.path, slot.motion_device.path] for slot in slots if slot)]
+                         and not any(path in [slot.device.path, slot.motion_device.path] for slot in slots if slot)]
 
         valid_device_names = ["Nintendo Switch Left Joy-Con",
                               "Nintendo Switch Right Joy-Con",
@@ -641,13 +653,14 @@ def handle_devices(stop_event):
                               "Nintendo Switch Combined Joy-Cons"]
 
         # Filter for Nintendo Switch devices only
-        evdev_devices = [d for d in evdev_devices if any(d.name.startswith(valid_name) for valid_name in valid_device_names)]
+        evdev_devices = [d for d in evdev_devices if
+                         any(d.name.startswith(valid_name) for valid_name in valid_device_names)]
 
         # Added for backwards compatibility with older versions of joycond
         combined_devices = [d for d in evdev_devices if d.name == "Nintendo Switch Combined Joy-Cons"]
 
         # players 1-4, 0 for invalid devices
-        players = {i:[] for i in range(UDPServer.MAX_PADS+1)}
+        players = {i: [] for i in range(UDPServer.MAX_PADS + 1)}
         for d in evdev_devices:
             players[get_player_id(d)].append(d)
 
@@ -666,7 +679,8 @@ def handle_devices(stop_event):
                 continue
 
             # Could happen when one Joy-Con in a combined pair is disconnected and then reconnected
-            previously_assigned = next((slot for slot in slots if slot and player == slot.player_id and "Combined" in slot.name), None)
+            previously_assigned = next(
+                (slot for slot in slots if slot and player == slot.player_id and "Combined" in slot.name), None)
             if previously_assigned:
                 add_devices(previously_assigned.device, devices, not previously_assigned.motion_only)
                 continue
@@ -700,7 +714,9 @@ def handle_devices(stop_event):
                     # This is the best guess we have to match combined device to it's individual Joy-Cons
                     if len(combined_devices) > 1:
                         context = pyudev.Context()
-                        combined_devices.sort(key=lambda d: next(iter(context.list_devices(sys_name=os.path.basename(d.path)))).time_since_initialized, reverse=True)
+                        combined_devices.sort(key=lambda d: next(
+                            iter(context.list_devices(sys_name=os.path.basename(d.path)))).time_since_initialized,
+                                              reverse=True)
 
                     device = combined_devices.pop(0)
 
@@ -729,7 +745,7 @@ def handle_devices(stop_event):
         if active_devices != taken_slots():
             print_slots()
 
-        stop_event.wait(0.5) # sleep for 0.5 seconds to avoid 100% cpu usage
+        stop_event.wait(0.5)  # sleep for 0.5 seconds to avoid 100% cpu usage
 
     for server in servers:
         server.stop()
@@ -741,10 +757,13 @@ parser.add_argument("-ip", "--ip", help="set custom port, default is 127.0.0.1",
 parser.add_argument("-p", "--port", help="set custom port, default is 26760", type=int, default=26760)
 
 select_motion = parser.add_mutually_exclusive_group()
-select_motion.add_argument("-l", "--left-only", help="use only left Joy-Cons for combined device motion", action="store_true")
-select_motion.add_argument("-r", "--right-only", help="use only right Joy-Cons for combined device motion", action="store_true")
+select_motion.add_argument("-l", "--left-only", help="use only left Joy-Cons for combined device motion",
+                           action="store_true")
+select_motion.add_argument("-r", "--right-only", help="use only right Joy-Cons for combined device motion",
+                           action="store_true")
 
 args = parser.parse_args()
+
 
 def main():
     # Check if hid_nintendo module is installed
@@ -775,6 +794,7 @@ def main():
     signal.signal(signal.SIGTERM, signal_handler)
 
     handle_devices(stop_event)
+
 
 if __name__ == "__main__":
     main()
