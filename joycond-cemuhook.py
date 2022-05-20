@@ -275,7 +275,6 @@ class SwitchDevice:
             dev = bus.get_object('org.freedesktop.UPower', device)
 
             dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
-            dbus_interface.Refresh()
 
             dbus_properties_interface = dbus.Interface(dev, 'org.freedesktop.DBus.Properties')
             properties = dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
@@ -291,7 +290,6 @@ class SwitchDevice:
         print_verbose("Battery level reading thread started")
         try:
             while self.dbus_interface != None:
-                self.dbus_interface.Refresh()
                 properties = self.dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
                 if properties["Percentage"] != self.battery:
                     print_verbose("Battery level changed")
