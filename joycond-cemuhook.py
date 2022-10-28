@@ -14,6 +14,10 @@ import argparse
 import subprocess
 from termcolor import colored
 import os.path
+from dbus.mainloop.glib import DBusGMainLoop
+from gi.repository import GLib
+
+loop = GLib.MainLoop()
 
 
 def print_verbose(str):
@@ -172,10 +176,6 @@ class SwitchDevice:
         if not self.motion_only:
             tasks.add(asyncio.ensure_future(self._handle_events(), loop=self._loop))
 
-        # Battery level reading task
-        if self.dbus_interface and self.dbus_properties_interface:
-            tasks.add(asyncio.ensure_future(self._get_battery_level(), loop=self._loop))
-
         # Listen to termination request task
         tasks.add(asyncio.ensure_future(self._wait_for_termination(), loop=self._loop))
 
@@ -265,14 +265,22 @@ class SwitchDevice:
         except (asyncio.CancelledError, OSError) as e:
             print_verbose("Input events task ended")
 
+    def handler(self, *args):
+        if len(args) >= 2 and args[0] == 'org.freedesktop.UPower.Device' and 'Percentage' in args[1]:
+            self.battery = args[1]['Percentage']
+            print_verbose("Found dbus interface for battery level reading. Value: " + str(self.battery))
+
     def get_battery_dbus_interface(self):
-        bus = dbus.SystemBus()
+        dbus_loop = DBusGMainLoop()
+        bus = dbus.SystemBus(mainloop=dbus_loop)
         upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
 
         upower_list = upower.get_dbus_method('EnumerateDevices', 'org.freedesktop.UPower')()
 
         for device in upower_list:
             dev = bus.get_object('org.freedesktop.UPower', device)
+            bus.add_signal_receiver(self.handler, signal_name='PropertiesChanged', bus_name=dev.bus_name,
+                                    path=dev.object_path)
 
             dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
 
@@ -285,20 +293,6 @@ class SwitchDevice:
                 return dbus_interface, dbus_properties_interface
 
         return None, None
-
-    async def _get_battery_level(self):
-        print_verbose("Battery level reading thread started")
-        try:
-            while self.dbus_interface != None:
-                properties = self.dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
-                if properties["Percentage"] != self.battery:
-                    print_verbose("Battery level changed")
-                    self.battery = properties["Percentage"]
-                    self.server.print_slots()
-                await asyncio.sleep(30)
-        except (asyncio.CancelledError, Exception) as e:
-            print_verbose("Battery level reading task ended")
-            self.battery = None
 
     @property
     def connected(self):
@@ -743,6 +737,7 @@ def handle_devices(stop_event):
         if active_devices != taken_slots():
             print_slots()
 
+        loop.run()
         stop_event.wait(0.5)  # sleep for 0.5 seconds to avoid 100% cpu usage
 
     for server in servers:
@@ -787,6 +782,7 @@ def main():
     def signal_handler(signal, frame):
         print("Stopping servers...")
         stop_event.set()
+        loop.quit()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)

@@ -4,3 +4,4 @@ asyncio
 dbus-python
 argparse
 termcolor
+PyGObject-stubs
