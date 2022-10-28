@@ -279,8 +279,7 @@ class SwitchDevice:
 
         for device in upower_list:
             dev = bus.get_object('org.freedesktop.UPower', device)
-            bus.add_signal_receiver(self.handler, signal_name='PropertiesChanged', bus_name=dev.bus_name,
-                                    path=dev.object_path)
+            bus.add_signal_receiver(self.handler, signal_name='PropertiesChanged', bus_name=dev.bus_name, path=dev.object_path)
 
             dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
 
@@ -737,7 +736,6 @@ def handle_devices(stop_event):
         if active_devices != taken_slots():
             print_slots()
 
-        loop.run()
         stop_event.wait(0.5)  # sleep for 0.5 seconds to avoid 100% cpu usage
 
     for server in servers:
@@ -757,6 +755,8 @@ select_motion.add_argument("-r", "--right-only", help="use only right Joy-Cons f
 
 args = parser.parse_args()
 
+def runGliLoop():
+    loop.run()
 
 def main():
     # Check if hid_nintendo module is installed
@@ -779,13 +779,18 @@ def main():
 
     stop_event = threading.Event()
 
+    GliThread = threading.Thread(target=runGliLoop)
+
     def signal_handler(signal, frame):
         print("Stopping servers...")
         stop_event.set()
         loop.quit()
+        GliThread.join()
 
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
+
+    GliThread.start()
 
     handle_devices(stop_event)
 
