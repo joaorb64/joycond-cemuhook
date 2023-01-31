@@ -779,8 +779,14 @@ def main():
     hid_nintendo_loaded = process.returncode
 
     if hid_nintendo_loaded == 1:
-        print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
-        exit()
+        # Check if hid_nintendo is statically built into the kernel
+        process = subprocess.Popen(["/bin/sh", "-c", 'cat /lib/modules/$(uname -r)/modules.builtin | grep hid-nintendo'], stdout=subprocess.DEVNULL)
+        process.communicate()
+        hid_nintendo_loaded = process.returncode
+
+        if hid_nintendo_loaded == 1:
+            print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
+            exit()
 
     stop_event = threading.Event()
 
