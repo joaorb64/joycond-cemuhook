@@ -1,6 +1,0 @@
-evdev
-pyudev
-asyncio
-dbus-python
-argparse
-termcolor

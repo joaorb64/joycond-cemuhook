@@ -14,7 +14,7 @@ import argparse
 import subprocess
 from termcolor import colored
 import os.path
-
+import pkg_resources
 
 def print_verbose(str):
     global args
@@ -141,7 +141,7 @@ class SwitchDevice:
 
         self.player_id = get_player_id(self.led_status)
 
-        with open(os.path.join('profiles', self.name + '.json')) as profile:
+        with open(os.path.join(pkg_resources.resource_filename('joycond_cemuhook', 'profiles'), self.name + '.json')) as profile:
             original_keymap = json.load(profile)
             self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]: [] for ps_key, ecode in original_keymap.items() if
                            ecode is not None}

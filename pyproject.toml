@@ -1,0 +1,39 @@
+[project]
+name = "joycond-cemuhook"
+authors = [
+  { name="João Ribeiro Bezerra", email="joaorb64@gmail.com" },
+]
+description = "Support for cemuhook's UDP protocol for joycond devices"
+readme = "README.rst"
+requires-python = ">=3.7"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+dependencies = [
+  "evdev",
+  "pyudev",
+  "asyncio",
+  "dbus-python",
+  "argparse",
+  "termcolor"
+]
+dynamic = ["version"]
+
+[project.scripts]
+joycond-cemuhook = "joycond_cemuhook:main"
+
+[tool.setuptools]
+package-data = { "joycond_cemuhook" = ["profiles/*"] }
+
+[tool.setuptools-git-versioning]
+enabled = true
+
+[build-system]
+requires = [ "setuptools>=41", "wheel", "setuptools-git-versioning<2", ]
+build-backend = "setuptools.build_meta"
+
+[project.urls]
+"Homepage" = "https://github.com/joaorb64/joycond-cemuhook"
+"Bug Tracker" = "https://github.com/joaorb64/joycond-cemuhook/issues"
