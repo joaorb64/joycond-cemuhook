@@ -647,6 +647,8 @@ def handle_devices(stop_event):
         valid_device_names = ["Nintendo Switch Left Joy-Con",
                               "Nintendo Switch Right Joy-Con",
                               "Nintendo Switch Pro Controller",
+                              "Pro Controller",
+                              "Nintendo Co., Ltd. Pro Controller",
                               "Nintendo Switch Virtual Pro Controller",
                               "Nintendo Switch Combined Joy-Cons"]
 
