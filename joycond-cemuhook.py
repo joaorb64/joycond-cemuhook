@@ -267,22 +267,23 @@ class SwitchDevice:
 
     def get_battery_dbus_interface(self):
         bus = dbus.SystemBus()
-        upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
+        if bus.name_has_owner('org.freedesktop.UPower'):
+            upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
 
-        upower_list = upower.get_dbus_method('EnumerateDevices', 'org.freedesktop.UPower')()
+            upower_list = upower.get_dbus_method('EnumerateDevices', 'org.freedesktop.UPower')()
 
-        for device in upower_list:
-            dev = bus.get_object('org.freedesktop.UPower', device)
+            for device in upower_list:
+                dev = bus.get_object('org.freedesktop.UPower', device)
 
-            dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
+                dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
 
-            dbus_properties_interface = dbus.Interface(dev, 'org.freedesktop.DBus.Properties')
-            properties = dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
+                dbus_properties_interface = dbus.Interface(dev, 'org.freedesktop.DBus.Properties')
+                properties = dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
 
-            if properties["Serial"] == self.serial:
-                self.battery = properties["Percentage"]
-                print_verbose("Found dbus interface for battery level reading. Value: " + str(self.battery))
-                return dbus_interface, dbus_properties_interface
+                if properties["Serial"] == self.serial:
+                    self.battery = properties["Percentage"]
+                    print_verbose("Found dbus interface for battery level reading. Value: " + str(self.battery))
+                    return dbus_interface, dbus_properties_interface
 
         return None, None
 
