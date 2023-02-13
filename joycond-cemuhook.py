@@ -764,38 +764,34 @@ select_motion.add_argument("-r", "--right-only", help="use only right Joy-Cons f
 args = parser.parse_args()
 
 def check_module(module_name):
+    def check_for_state(module_name, process, state):
+        process.communicate()
+        success = process.returncode == 0
+        word = "" if success else "not "
+        print_verbose(f"Kernel module '{module_name}' is {word}{state}.")
+        return success
+
     def module_installed(module_name):
-        """Check if a kernel module is installed."""
-        modinfo = subprocess.Popen(["modinfo", module_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        modinfo.communicate()
-        return modinfo.returncode == 0
+        process = subprocess.Popen(["modinfo", module_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return check_for_state(module_name, process, "installed")
 
     def module_loaded(module_name):
-        """Check if a kernel module is loaded."""
-        lsmod_proc = subprocess.Popen(['lsmod'], stdout=subprocess.PIPE)
-        grep_proc = subprocess.Popen(['grep', module_name], stdin=lsmod_proc.stdout)
-        grep_proc.communicate()  # Block until finished
-        return grep_proc.returncode == 0
+        lsmod_process = subprocess.Popen(['lsmod'], stdout=subprocess.PIPE)
+        grep_process = subprocess.Popen(['grep', '-q', module_name], stdin=lsmod_process.stdout)
+        return check_for_state(module_name, grep_process, "loaded")
 
     def module_builtin(module_name):
-        """Check if a kernel module is statically built into the kernel."""
-        cat_proc = subprocess.Popen(["/bin/sh", "-c", 'cat /lib/modules/$(uname -r)/modules.builtin'], stdout=subprocess.PIPE)
-        grep_proc = subprocess.Popen(['grep', module_name], stdin=cat_proc.stdout)
-        grep_proc.communicate()  # Block until finished
-        return grep_proc.returncode == 0
+        cat_process = subprocess.Popen(["/bin/sh", "-c", 'cat /lib/modules/$(uname -r)/modules.builtin'], stdout=subprocess.PIPE)
+        grep_process = subprocess.Popen(['grep', '-q', module_name], stdin=cat_process.stdout)
+        return check_for_state(module_name, grep_process, "built-in")
 
-    if module_installed(module_name) == 1:
-        print_verbose(f"Kernel module '{module_name}' is not installed.")
-        return False
-    if module_loaded(module_name) == 1 and module_builtin(module_name) == 1:
-        print_verbose(f"Kernel module '{module_name}' is not loaded.")
-        return False
+    return module_installed(module_name) and (module_loaded(module_name) or module_builtin(module_name))
 
 def check_modules(module_names):
     for module_name in module_names:
         if check_module(module_name):
+            print_verbose(f"Using kernel module '{module_name}'")
             return True
-        print_verbose(f"Kernel module '{module_name}' is not available.")
     return False
 
 def main():
@@ -803,10 +799,10 @@ def main():
 
     if not check_modules(module_names):
         message = os.linesep.join([
-                      "Error: A required kernel module is not available.",
-                      f"Please make sure that one of the supported modules is installed and loaded: {module_names}",
-                      "",
-                      "Hint: to load a module, try: sudo modprobe <module_name>"])
+                      "Error: A required kernel module is missing.",
+                      f"  Supported modules: {module_names}",
+                      "  To load a module, try: sudo modprobe <module_name>",
+                      "  Enable verbose logging for details."])
         print(message)
         exit(1)
 
