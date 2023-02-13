@@ -1,19 +1,19 @@
-import sys
+import argparse
+import asyncio
+import dbus
 import evdev
+import json
+import os.path
 import pyudev
-import threading
+import signal
 import socket
 import struct
-from binascii import crc32
-import time
-import asyncio
-import signal
-import dbus
-import json
-import argparse
 import subprocess
+import sys
+import threading
+import time
+from binascii import crc32
 from termcolor import colored
-import os.path
 
 
 def print_verbose(str):
@@ -763,31 +763,52 @@ select_motion.add_argument("-r", "--right-only", help="use only right Joy-Cons f
 
 args = parser.parse_args()
 
+def check_module(module_name):
+    def module_installed(module_name):
+        """Check if a kernel module is installed."""
+        modinfo = subprocess.Popen(["modinfo", module_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        modinfo.communicate()
+        return modinfo.returncode == 0
+
+    def module_loaded(module_name):
+        """Check if a kernel module is loaded."""
+        lsmod_proc = subprocess.Popen(['lsmod'], stdout=subprocess.PIPE)
+        grep_proc = subprocess.Popen(['grep', module_name], stdin=lsmod_proc.stdout)
+        grep_proc.communicate()  # Block until finished
+        return grep_proc.returncode == 0
+
+    def module_builtin(module_name):
+        """Check if a kernel module is statically built into the kernel."""
+        cat_proc = subprocess.Popen(["/bin/sh", "-c", 'cat /lib/modules/$(uname -r)/modules.builtin'], stdout=subprocess.PIPE)
+        grep_proc = subprocess.Popen(['grep', module_name], stdin=cat_proc.stdout)
+        grep_proc.communicate()  # Block until finished
+        return grep_proc.returncode == 0
+
+    if module_installed(module_name) == 1:
+        print_verbose(f"Kernel module '{module_name}' is not installed.")
+        return False
+    if module_loaded(module_name) == 1 and module_builtin(module_name) == 1:
+        print_verbose(f"Kernel module '{module_name}' is not loaded.")
+        return False
+
+def check_modules(module_names):
+    for module_name in module_names:
+        if check_module(module_name):
+            return True
+        print_verbose(f"Kernel module '{module_name}' is not available.")
+    return False
 
 def main():
-    # Check if hid_nx module is installed
-    process = subprocess.Popen(["modinfo", "hid_nx"], stdout=subprocess.DEVNULL)
-    process.communicate()
-    hid_nx_installed = process.returncode
+    module_names = ["hid_nintendo", "hid_nx"]
 
-    if hid_nx_installed == 1:
-        print("Seems like hid_nx is not installed.")
-        exit()
-
-    # Check if hid_nx module is loaded
-    process = subprocess.Popen(["/bin/sh", "-c", 'lsmod | grep hid_nx'], stdout=subprocess.DEVNULL)
-    process.communicate()
-    hid_nx_loaded = process.returncode
-
-    if hid_nx_loaded == 1:
-        # Check if hid_nx is statically built into the kernel
-        process = subprocess.Popen(["/bin/sh", "-c", 'cat /lib/modules/$(uname -r)/modules.builtin | grep hid-nx'], stdout=subprocess.DEVNULL)
-        process.communicate()
-        hid_nx_loaded = process.returncode
-
-        if hid_nx_loaded == 1:
-            print("Seems like hid_nx is not loaded. Load it with 'sudo modprobe hid_nx'.")
-            exit()
+    if not check_modules(module_names):
+        message = os.linesep.join([
+                      "Error: A required kernel module is not available.",
+                      f"Please make sure that one of the supported modules is installed and loaded: {module_names}",
+                      "",
+                      "Hint: to load a module, try: sudo modprobe <module_name>"])
+        print(message)
+        exit(1)
 
     stop_event = threading.Event()
 
