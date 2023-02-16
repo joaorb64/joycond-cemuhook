@@ -14,7 +14,7 @@ import argparse
 import subprocess
 from termcolor import colored
 import os.path
-import pkg_resources
+import pkgutil
 
 def print_verbose(str):
     global args
@@ -141,14 +141,14 @@ class SwitchDevice:
 
         self.player_id = get_player_id(self.led_status)
 
-        with open(os.path.join(pkg_resources.resource_filename('joycond_cemuhook', 'profiles'), self.name + '.json')) as profile:
-            original_keymap = json.load(profile)
-            self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]: [] for ps_key, ecode in original_keymap.items() if
-                           ecode is not None}
-            for ps_key, ecode in original_keymap.items():
-                if ecode is not None:
-                    prefix = '-' if ecode.startswith('-') else ''
-                    self.keymap[evdev.ecodes.ecodes[ecode.lstrip('-')]].append(prefix + ps_key)
+        profile = pkgutil.get_data(__name__, f"profiles/{profile_name}.json")
+        original_keymap = json.load(profile)
+        self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]: [] for ps_key, ecode in original_keymap.items() if
+                        ecode is not None}
+        for ps_key, ecode in original_keymap.items():
+            if ecode is not None:
+                prefix = '-' if ecode.startswith('-') else ''
+                self.keymap[evdev.ecodes.ecodes[ecode.lstrip('-')]].append(prefix + ps_key)
 
         self.state = {ps_key.lstrip('-'): 0x00 for ps_key in original_keymap.keys()}
 
