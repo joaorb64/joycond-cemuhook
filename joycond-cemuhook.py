@@ -15,6 +15,23 @@ import time
 from binascii import crc32
 from termcolor import colored
 
+DEVICE_NAMES = [
+    "Nintendo Switch Left Joy-Con",
+    "Nintendo Switch Right Joy-Con",
+    "Nintendo Switch Pro Controller",
+    "Nintendo Switch Virtual Pro Controller",
+    "Nintendo Switch Combined Joy-Cons",
+]
+
+ALIASES = {
+    "Joy-Con (L)":                       "Nintendo Switch Left Joy-Con",
+    "Joy-Con (R)":                       "Nintendo Switch Right Joy-Con",
+    "Pro Controller":                    "Nintendo Switch Pro Controller",
+    "Nintendo Co., Ltd. Pro Controller": "Nintendo Switch Pro Controller",
+}
+
+def get_name(alias):
+  return ALIASES.get(alias, alias)
 
 def print_verbose(str):
     global args
@@ -141,7 +158,7 @@ class SwitchDevice:
 
         self.player_id = get_player_id(self.led_status)
 
-        with open(os.path.join('profiles', self.name + '.json')) as profile:
+        with open(os.path.join('profiles', get_name(self.name) + '.json')) as profile:
             original_keymap = json.load(profile)
             self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]: [] for ps_key, ecode in original_keymap.items() if
                            ecode is not None}
@@ -645,13 +662,7 @@ def handle_devices(stop_event):
                          if path not in blacklisted
                          and not any(path in [slot.device.path, slot.motion_device.path] for slot in slots if slot)]
 
-        valid_device_names = ["Nintendo Switch Left Joy-Con",
-                              "Nintendo Switch Right Joy-Con",
-                              "Nintendo Switch Pro Controller",
-                              "Pro Controller",
-                              "Nintendo Co., Ltd. Pro Controller",
-                              "Nintendo Switch Virtual Pro Controller",
-                              "Nintendo Switch Combined Joy-Cons"]
+        valid_device_names = DEVICE_NAMES + list(ALIASES.keys())
 
         # Filter for Nintendo Switch devices only
         evdev_devices = [d for d in evdev_devices if
@@ -722,11 +733,11 @@ def handle_devices(stop_event):
                     device = combined_devices.pop(0)
 
                 # Right Joy-Con is mapped first
-                motion_devices = sorted(devices, key=lambda d: "Right" in d.name, reverse=True)
+                motion_devices = sorted(devices, key=lambda d: "Right" in get_name(d.name), reverse=True)
 
                 if args.right_only or args.left_only:
                     removed = "Right" if args.left_only else "Left"
-                    removed_device = next((d for d in motion_devices if removed in d.name), None)
+                    removed_device = next((d for d in motion_devices if removed in get_name(d.name)), None)
                     if removed_device:
                         motion_devices.remove(removed_device)
                         blacklisted.append(removed_device.path)
