@@ -1,19 +1,19 @@
-import sys
+import argparse
+import asyncio
+import dbus
 import evdev
+import json
+import os.path
 import pyudev
-import threading
+import signal
 import socket
 import struct
-from binascii import crc32
-import time
-import asyncio
-import signal
-import dbus
-import json
-import argparse
 import subprocess
+import sys
+import threading
+import time
+from binascii import crc32
 from termcolor import colored
-import os.path
 
 
 def print_verbose(str):
@@ -267,22 +267,23 @@ class SwitchDevice:
 
     def get_battery_dbus_interface(self):
         bus = dbus.SystemBus()
-        upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
+        if bus.name_has_owner('org.freedesktop.UPower'):
+            upower = bus.get_object('org.freedesktop.UPower', '/org/freedesktop/UPower')
 
-        upower_list = upower.get_dbus_method('EnumerateDevices', 'org.freedesktop.UPower')()
+            upower_list = upower.get_dbus_method('EnumerateDevices', 'org.freedesktop.UPower')()
 
-        for device in upower_list:
-            dev = bus.get_object('org.freedesktop.UPower', device)
+            for device in upower_list:
+                dev = bus.get_object('org.freedesktop.UPower', device)
 
-            dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
+                dbus_interface = dbus.Interface(dev, 'org.freedesktop.UPower.Device')
 
-            dbus_properties_interface = dbus.Interface(dev, 'org.freedesktop.DBus.Properties')
-            properties = dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
+                dbus_properties_interface = dbus.Interface(dev, 'org.freedesktop.DBus.Properties')
+                properties = dbus_properties_interface.GetAll("org.freedesktop.UPower.Device")
 
-            if properties["Serial"] == self.serial:
-                self.battery = properties["Percentage"]
-                print_verbose("Found dbus interface for battery level reading. Value: " + str(self.battery))
-                return dbus_interface, dbus_properties_interface
+                if properties["Serial"] == self.serial:
+                    self.battery = properties["Percentage"]
+                    print_verbose("Found dbus interface for battery level reading. Value: " + str(self.battery))
+                    return dbus_interface, dbus_properties_interface
 
         return None, None
 
@@ -764,31 +765,48 @@ select_motion.add_argument("-r", "--right-only", help="use only right Joy-Cons f
 
 args = parser.parse_args()
 
+def check_module(module_name):
+    def check_for_state(module_name, process, state):
+        process.communicate()
+        success = process.returncode == 0
+        word = "" if success else "not "
+        print_verbose(f"Kernel module '{module_name}' is {word}{state}.")
+        return success
+
+    def module_installed(module_name):
+        process = subprocess.Popen(["modinfo", module_name], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return check_for_state(module_name, process, "installed")
+
+    def module_loaded(module_name):
+        lsmod_process = subprocess.Popen(['lsmod'], stdout=subprocess.PIPE)
+        grep_process = subprocess.Popen(['grep', '-q', module_name], stdin=lsmod_process.stdout)
+        return check_for_state(module_name, grep_process, "loaded")
+
+    def module_builtin(module_name):
+        cat_process = subprocess.Popen(["/bin/sh", "-c", 'cat /lib/modules/$(uname -r)/modules.builtin'], stdout=subprocess.PIPE)
+        grep_process = subprocess.Popen(['grep', '-q', module_name], stdin=cat_process.stdout)
+        return check_for_state(module_name, grep_process, "built-in")
+
+    return module_installed(module_name) and (module_loaded(module_name) or module_builtin(module_name))
+
+def check_modules(module_names):
+    for module_name in module_names:
+        if check_module(module_name):
+            print_verbose(f"Using kernel module '{module_name}'")
+            return True
+    return False
 
 def main():
-    # Check if hid_nintendo module is installed
-    process = subprocess.Popen(["modinfo", "hid_nintendo"], stdout=subprocess.DEVNULL)
-    process.communicate()
-    hid_nintendo_installed = process.returncode
+    module_names = ["hid_nintendo", "hid_nx"]
 
-    if hid_nintendo_installed == 1:
-        print("Seems like hid_nintendo is not installed.")
-        exit()
-
-    # Check if hid_nintendo module is loaded
-    process = subprocess.Popen(["/bin/sh", "-c", 'lsmod | grep hid_nintendo'], stdout=subprocess.DEVNULL)
-    process.communicate()
-    hid_nintendo_loaded = process.returncode
-
-    if hid_nintendo_loaded == 1:
-        # Check if hid_nintendo is statically built into the kernel
-        process = subprocess.Popen(["/bin/sh", "-c", 'cat /lib/modules/$(uname -r)/modules.builtin | grep hid-nintendo'], stdout=subprocess.DEVNULL)
-        process.communicate()
-        hid_nintendo_loaded = process.returncode
-
-        if hid_nintendo_loaded == 1:
-            print("Seems like hid_nintendo is not loaded. Load it with 'sudo modprobe hid_nintendo'.")
-            exit()
+    if not check_modules(module_names):
+        message = os.linesep.join([
+                      "Error: A required kernel module is missing.",
+                      f"  Supported modules: {module_names}",
+                      "  To load a module, try: sudo modprobe <module_name>",
+                      "  Enable verbose logging for details."])
+        print(message)
+        exit(1)
 
     stop_event = threading.Event()
 
