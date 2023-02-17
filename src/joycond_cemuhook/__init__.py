@@ -141,8 +141,8 @@ class SwitchDevice:
 
         self.player_id = get_player_id(self.led_status)
 
-        profile = pkgutil.get_data(__name__, f"profiles/{profile_name}.json")
-        original_keymap = json.load(profile)
+        profile = pkgutil.get_data(__name__, f"profiles/{self.name}.json")
+        original_keymap = json.loads(profile)
         self.keymap = {evdev.ecodes.ecodes[ecode.lstrip('-')]: [] for ps_key, ecode in original_keymap.items() if
                         ecode is not None}
         for ps_key, ecode in original_keymap.items():
