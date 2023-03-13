@@ -16,7 +16,6 @@ dependencies = [
   "pyudev",
   "asyncio",
   "dbus-python",
-  "argparse",
   "termcolor"
 ]
 dynamic = ["version"]
