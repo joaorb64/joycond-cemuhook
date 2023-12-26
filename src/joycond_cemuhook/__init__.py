@@ -813,12 +813,11 @@ def main():
 
     if not check_modules(module_names):
         message = os.linesep.join([
-                      "Error: A required kernel module is missing.",
+                      "Warning: A required kernel module is missing.",
                       f"  Supported modules: {module_names}",
                       "  To load a module, try: sudo modprobe <module_name>",
                       "  Enable verbose logging for details."])
         print(message)
-        exit(1)
 
     stop_event = threading.Event()
 
