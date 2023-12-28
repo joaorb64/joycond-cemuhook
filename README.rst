@@ -31,8 +31,7 @@ How to run without installing
 --------
 
 - Install `dkms-hid-nintendo <https://github.com/nicman23/dkms-hid-nintendo>`_ (if your kernel doesn't include the hid_nintendo driver)
-- Run `git clone git@github.com:joaorb64/joycond-cemuhook.git`
-- `cd joycond-cemuhook/src/joycond_cemuhook` 
+- Run ``git clone git@github.com:joaorb64/joycond-cemuhook.git``
 - Run with ``sudo python3 joycond-cemuhook/src/joycond_cemuhook``
 
 Media
