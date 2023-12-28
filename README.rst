@@ -13,7 +13,7 @@ Supports up to 4 controllers from the following:
 - Left Joycon
 - Right Joycon
 
-How to use
+How to install
 --------
 
 - Install `dkms-hid-nintendo <https://github.com/nicman23/dkms-hid-nintendo>`_ (if your kernel doesn't include the hid_nintendo driver)
@@ -26,6 +26,14 @@ From now on, you'll only need to run ``joycond-cemuhook`` from a terminal.
 - Open a compatible emulator and enable cemuhook UDP motion input
 
 Head to this project's `wiki <https://github.com/joaorb64/joycond-cemuhook/wiki>`_ for detailed instructions on how to configure Cemuhook on emulators.
+
+How to run without installing
+--------
+
+- Install `dkms-hid-nintendo <https://github.com/nicman23/dkms-hid-nintendo>`_ (if your kernel doesn't include the hid_nintendo driver)
+- Run `git clone git@github.com:joaorb64/joycond-cemuhook.git`
+- `cd joycond-cemuhook/src/joycond_cemuhook` 
+- Run with ``sudo python3 joycond-cemuhook/src/joycond_cemuhook``
 
 Media
 --------
