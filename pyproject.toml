@@ -15,7 +15,8 @@ dependencies = [
   "evdev",
   "pyudev",
   "dbus-python",
-  "termcolor"
+  "termcolor",
+  "PyGObject-stubs"
 ]
 dynamic = ["version"]
 
