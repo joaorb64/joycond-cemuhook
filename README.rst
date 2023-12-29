@@ -37,7 +37,7 @@ How to run without installing
 Media
 --------
 
-The Legend of Zelda: Swkyward Sword on Dolphin
+The Legend of Zelda: Skyward Sword on Dolphin
 
 .. image:: ../media/zeldass-dolphin.gif
 
