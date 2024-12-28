@@ -33,6 +33,7 @@ DEVICE_ALIASES = {
     "Joy-Con (R)":                       "Nintendo Switch Right Joy-Con",
     "Pro Controller":                    "Nintendo Switch Pro Controller",
     "Nintendo Co., Ltd. Pro Controller": "Nintendo Switch Pro Controller",
+    "Nintendo.Co.Ltd. Pro Controller":   "Nintendo Switch Pro Controller",
 }
 
 
